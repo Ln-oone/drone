@@ -85,7 +85,8 @@ amap_html = """
         center: [118.749, 32.2332],   // 南京科技职业学院
         zoom: 17,
         pitch: 65,                     // 倾斜角度（3D效果）
-        viewMode: '3D',               // 3D视图
+        viewMode: '3D',                // 3D视图
+        layers: [new AMap.TileLayer.Satellite()],   // 添加这一行，使用卫星图层
         building: true,               // 显示3D建筑物
         showIndoorMap: false
     });
