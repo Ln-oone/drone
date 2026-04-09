@@ -40,7 +40,7 @@ amap_html = """
         .note { font-size: 11px; text-align: center; margin-top: 10px; color: #ccc; }
     </style>
     <!-- 引入高德地图 JS API -->
-    <script src="https://webapi.amap.com/maps?v=2.0&key=a55f016a3122cec6fa06dd67b9e306dc"></script>
+    <script src="https://webapi.amap.com/maps?v=2.0&key=17bf012d2daaa0963ed83efdcf079fa0"></script>
     <!-- 引入高德地图 UI 组件库（可选） -->
     <script src="https://webapi.amap.com/ui/1.1/main.js"></script>
 </head>
