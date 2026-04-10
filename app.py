@@ -1,8 +1,3 @@
-"""
-无人机地面站系统 - 智能任务规划平台
-功能：心跳包、地图显示、GCJ-02坐标转换、障碍物多边形圈选、持久化存储
-"""
-
 import streamlit as st
 import folium
 from streamlit_folium import st_folium
