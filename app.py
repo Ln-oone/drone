@@ -134,5 +134,3 @@ output = st_folium(m, width=900, height=600, returned_objects=[])
 
 # 可选：从地图点击中获取坐标并设置点（高级功能）
 # 因为 LatLngPopup 已经弹窗，此处不再重复实现自动赋值，有需要可扩展
-
-st.info("提示：点击地图任意位置会弹出坐标弹窗，可手动填入侧边栏。障碍物为红色方块（示例）。"
