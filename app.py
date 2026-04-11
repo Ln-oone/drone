@@ -1,6 +1,6 @@
 import streamlit as st
 import folium
-from streamlit_folium import folium_static, st_folium
+from streamlit_folium import folium_static
 import random
 import time
 import math
@@ -10,10 +10,10 @@ from datetime import datetime
 import pandas as pd
 
 # ==================== 页面配置 ====================
-st.set_page_config(page_title="无人机地面站系统", layout="wide")
+st.set_page_config(page_title="无人机地面站系统 - 南京科技职业学院", layout="wide")
 
 # ==================== 南京科技职业学院坐标 ====================
-# 学校中心坐标 (GCJ-02 高德坐标系，便于输入)
+# 学校中心坐标 (GCJ-02 高德坐标系)
 SCHOOL_CENTER_GCJ = [118.6965, 32.2015]  # [经度, 纬度]
 
 # A点 (教学楼区域) B点 (操场区域) - GCJ-02 坐标
@@ -23,9 +23,17 @@ DEFAULT_B_GCJ = [118.6990, 32.2030]
 # ==================== 配置文件路径 ====================
 CONFIG_FILE = "obstacle_config.json"
 
+# ==================== 高德地图瓦片地址 ====================
+# 高德矢量图（带中文标注）
+GAODE_VECTOR_URL = "https://webrd02.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}"
+# 高德卫星图（影像图）
+GAODE_SATELLITE_URL = "https://webst01.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}"
+# 高德卫星图带标注
+GAODE_SATELLITE_LABEL_URL = "https://webst01.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}"
+
 # ==================== 坐标系转换函数 ====================
 def gcj02_to_wgs84(lng, lat):
-    """GCJ02转WGS84 (OpenStreetMap使用WGS84)"""
+    """GCJ02转WGS84 (高德坐标转GPS坐标)"""
     a = 6378245.0
     ee = 0.00669342162296594323
     
@@ -45,7 +53,7 @@ def gcj02_to_wgs84(lng, lat):
     return lng * 2 - mglng, lat * 2 - mglat
 
 def wgs84_to_gcj02(lng, lat):
-    """WGS84转GCJ02"""
+    """WGS84转GCJ02 (GPS坐标转高德坐标)"""
     a = 6378245.0
     ee = 0.00669342162296594323
     
@@ -106,15 +114,15 @@ def save_obstacles_to_file(obstacles):
 
 # ==================== 心跳包模拟器 ====================
 class HeartbeatSimulator:
-    def __init__(self, start_point_wgs84):
+    def __init__(self, start_point_gcj):
         self.history = []
-        self.current_pos = start_point_wgs84.copy()
+        self.current_pos = start_point_gcj.copy()  # GCJ-02坐标
         self.target_pos = None
         self.simulating = False
         self.flight_altitude = 50
         
-    def set_target(self, target_wgs84, altitude=50):
-        self.target_pos = target_wgs84
+    def set_target(self, target_gcj, altitude=50):
+        self.target_pos = target_gcj
         self.flight_altitude = altitude
         self.simulating = True
         
@@ -154,17 +162,18 @@ class HeartbeatSimulator:
             self.history.pop()
         return heartbeat
 
-# ==================== 创建OpenStreetMap地图 ====================
-def create_planning_map(center_wgs84, points_wgs84, obstacles_wgs84, flight_history=None):
-    """创建航线规划地图 - 使用OpenStreetMap"""
+# ==================== 创建高德地图 ====================
+def create_planning_map(center_gcj, points_gcj, obstacles_gcj, flight_history=None):
+    """创建航线规划地图 - 使用高德地图"""
     m = folium.Map(
-        location=[center_wgs84[1], center_wgs84[0]],
+        location=[center_gcj[1], center_gcj[0]],
         zoom_start=16,
-        tiles="OpenStreetMap"
+        tiles=GAODE_SATELLITE_URL,
+        attr="高德卫星地图"
     )
     
     # 添加障碍物多边形
-    for obs in obstacles_wgs84:
+    for obs in obstacles_gcj:
         if obs.get('polygon'):
             coords = obs['polygon']
             folium.Polygon(
@@ -178,26 +187,26 @@ def create_planning_map(center_wgs84, points_wgs84, obstacles_wgs84, flight_hist
             ).add_to(m)
     
     # 添加 A 点
-    if points_wgs84.get('A'):
+    if points_gcj.get('A'):
         folium.Marker(
-            [points_wgs84['A'][1], points_wgs84['A'][0]],
+            [points_gcj['A'][1], points_gcj['A'][0]],
             popup="🟢 起点 A",
             icon=folium.Icon(color="green", icon="play", prefix="fa")
         ).add_to(m)
     
     # 添加 B 点
-    if points_wgs84.get('B'):
+    if points_gcj.get('B'):
         folium.Marker(
-            [points_wgs84['B'][1], points_wgs84['B'][0]],
+            [points_gcj['B'][1], points_gcj['B'][0]],
             popup="🔴 终点 B",
             icon=folium.Icon(color="red", icon="stop", prefix="fa")
         ).add_to(m)
     
     # 添加航线
-    if points_wgs84.get('A') and points_wgs84.get('B'):
+    if points_gcj.get('A') and points_gcj.get('B'):
         folium.PolyLine(
-            [[points_wgs84['A'][1], points_wgs84['A'][0]], 
-             [points_wgs84['B'][1], points_wgs84['B'][0]]],
+            [[points_gcj['A'][1], points_gcj['A'][0]], 
+             [points_gcj['B'][1], points_gcj['B'][0]]],
             color="blue",
             weight=3,
             opacity=0.8,
@@ -228,22 +237,27 @@ def main():
         ["🗺️ 航线规划", "📡 飞行监控", "🚧 障碍物管理"]
     )
     
+    # 地图类型选择
+    map_type = st.sidebar.radio(
+        "🗺️ 地图类型",
+        ["卫星影像", "矢量地图"],
+        index=0
+    )
+    
     # ==================== 初始化 Session State ====================
-    # 点坐标存储 (WGS84格式，用于地图显示)
-    if "points_wgs84" not in st.session_state:
-        a_wgs84 = gcj02_to_wgs84(DEFAULT_A_GCJ[0], DEFAULT_A_GCJ[1])
-        b_wgs84 = gcj02_to_wgs84(DEFAULT_B_GCJ[0], DEFAULT_B_GCJ[1])
-        st.session_state.points_wgs84 = {
-            'A': [a_wgs84[0], a_wgs84[1]],
-            'B': [b_wgs84[0], b_wgs84[1]]
+    # 点坐标存储 (GCJ-02格式，直接用于高德地图)
+    if "points_gcj" not in st.session_state:
+        st.session_state.points_gcj = {
+            'A': DEFAULT_A_GCJ.copy(),
+            'B': DEFAULT_B_GCJ.copy()
         }
     
-    # 障碍物 (WGS84格式)
-    if "obstacles_wgs84" not in st.session_state:
-        st.session_state.obstacles_wgs84 = load_obstacles_from_file()
-        if not st.session_state.obstacles_wgs84:
+    # 障碍物 (GCJ-02格式)
+    if "obstacles_gcj" not in st.session_state:
+        st.session_state.obstacles_gcj = load_obstacles_from_file()
+        if not st.session_state.obstacles_gcj:
             # 默认障碍物
-            st.session_state.obstacles_wgs84 = [
+            st.session_state.obstacles_gcj = [
                 {
                     "name": "教学楼",
                     "polygon": [
@@ -268,8 +282,7 @@ def main():
     
     # 心跳包模拟器
     if "heartbeat_sim" not in st.session_state:
-        start_wgs84 = [st.session_state.points_wgs84['A'][0], st.session_state.points_wgs84['A'][1]]
-        st.session_state.heartbeat_sim = HeartbeatSimulator(start_wgs84)
+        st.session_state.heartbeat_sim = HeartbeatSimulator(st.session_state.points_gcj['A'].copy())
     if "last_hb_time" not in st.session_state:
         st.session_state.last_hb_time = time.time()
     if "simulation_running" not in st.session_state:
@@ -279,10 +292,18 @@ def main():
     if "flight_history" not in st.session_state:
         st.session_state.flight_history = []
     
+    # 选择地图瓦片
+    if map_type == "卫星影像":
+        current_tile = GAODE_SATELLITE_URL
+        tile_attr = "高德卫星地图"
+    else:
+        current_tile = GAODE_VECTOR_URL
+        tile_attr = "高德矢量地图"
+    
     # ==================== 航线规划页面 ====================
     if page == "🗺️ 航线规划":
         st.header("🗺️ 航线规划")
-        st.info("💡 操作说明：输入GCJ-02坐标(高德/百度)，系统自动转换到地图显示")
+        st.info("💡 操作说明：输入GCJ-02坐标(高德/百度)，地图使用高德卫星影像")
         
         col1, col2 = st.columns([1, 1.5])
         
@@ -296,10 +317,10 @@ def main():
             a_lng = st.number_input("经度", value=DEFAULT_A_GCJ[0], format="%.6f", key="a_lng")
             
             if st.button("📍 设置 A 点", use_container_width=True, type="primary"):
-                # GCJ-02 转 WGS-84
-                wgs_lng, wgs_lat = gcj02_to_wgs84(a_lng, a_lat)
-                st.session_state.points_wgs84['A'] = [wgs_lng, wgs_lat]
-                st.success(f"✅ A点已设置")
+                st.session_state.points_gcj['A'] = [a_lng, a_lat]
+                # 同时更新心跳包起始位置
+                st.session_state.heartbeat_sim.current_pos = [a_lng, a_lat]
+                st.success(f"✅ A点已设置 ({a_lng:.6f}, {a_lat:.6f})")
             
             st.markdown("---")
             st.markdown("#### 🔴 终点 B")
@@ -307,9 +328,8 @@ def main():
             b_lng = st.number_input("经度", value=DEFAULT_B_GCJ[0], format="%.6f", key="b_lng")
             
             if st.button("📍 设置 B 点", use_container_width=True, type="primary"):
-                wgs_lng, wgs_lat = gcj02_to_wgs84(b_lng, b_lat)
-                st.session_state.points_wgs84['B'] = [wgs_lng, wgs_lat]
-                st.success(f"✅ B点已设置")
+                st.session_state.points_gcj['B'] = [b_lng, b_lat]
+                st.success(f"✅ B点已设置 ({b_lng:.6f}, {b_lat:.6f})")
             
             st.markdown("---")
             st.markdown("#### ✈️ 飞行参数")
@@ -321,7 +341,7 @@ def main():
             col_btn1, col_btn2 = st.columns(2)
             with col_btn1:
                 if st.button("▶️ 开始飞行", use_container_width=True):
-                    target = st.session_state.points_wgs84['B']
+                    target = st.session_state.points_gcj['B']
                     st.session_state.heartbeat_sim.set_target([target[0], target[1]], st.session_state.flight_altitude)
                     st.session_state.simulation_running = True
                     st.success("🚁 飞行已开始！")
@@ -332,26 +352,79 @@ def main():
                     st.info("飞行已停止")
             
             st.markdown("---")
-            st.markdown("### 📍 当前航点 (WGS84)")
-            st.write(f"🟢 A点: ({st.session_state.points_wgs84['A'][0]:.6f}, {st.session_state.points_wgs84['A'][1]:.6f})")
-            st.write(f"🔴 B点: ({st.session_state.points_wgs84['B'][0]:.6f}, {st.session_state.points_wgs84['B'][1]:.6f})")
+            st.markdown("### 📍 当前航点 (GCJ-02)")
+            st.write(f"🟢 A点: ({st.session_state.points_gcj['A'][0]:.6f}, {st.session_state.points_gcj['A'][1]:.6f})")
+            st.write(f"🔴 B点: ({st.session_state.points_gcj['B'][0]:.6f}, {st.session_state.points_gcj['B'][1]:.6f})")
         
         with col2:
-            st.subheader("🗺️ 规划地图 (OpenStreetMap)")
+            st.subheader("🗺️ 规划地图 (高德卫星)")
             
             # 获取飞行轨迹
             flight_trail = [[hb['lng'], hb['lat']] for hb in st.session_state.heartbeat_sim.history[:20]]
             
             # 地图中心
-            center = st.session_state.points_wgs84['A'] if st.session_state.points_wgs84['A'] else [118.6965, 32.2015]
+            center = st.session_state.points_gcj['A'] if st.session_state.points_gcj['A'] else SCHOOL_CENTER_GCJ
             
-            planning_map = create_planning_map(
-                center,
-                st.session_state.points_wgs84,
-                st.session_state.obstacles_wgs84,
-                flight_trail
+            # 临时修改folium的tile
+            m = folium.Map(
+                location=[center[1], center[0]],
+                zoom_start=16,
+                tiles=current_tile,
+                attr=tile_attr
             )
-            folium_static(planning_map, width=700, height=550)
+            
+            # 添加障碍物多边形
+            for obs in st.session_state.obstacles_gcj:
+                if obs.get('polygon'):
+                    coords = obs['polygon']
+                    folium.Polygon(
+                        locations=[[c[1], c[0]] for c in coords],
+                        color="red",
+                        weight=2,
+                        fill=True,
+                        fill_color="red",
+                        fill_opacity=0.4,
+                        popup=f"🚧 {obs.get('name', '障碍物')}"
+                    ).add_to(m)
+            
+            # 添加 A 点
+            if st.session_state.points_gcj.get('A'):
+                folium.Marker(
+                    [st.session_state.points_gcj['A'][1], st.session_state.points_gcj['A'][0]],
+                    popup="🟢 起点 A",
+                    icon=folium.Icon(color="green", icon="play", prefix="fa")
+                ).add_to(m)
+            
+            # 添加 B 点
+            if st.session_state.points_gcj.get('B'):
+                folium.Marker(
+                    [st.session_state.points_gcj['B'][1], st.session_state.points_gcj['B'][0]],
+                    popup="🔴 终点 B",
+                    icon=folium.Icon(color="red", icon="stop", prefix="fa")
+                ).add_to(m)
+            
+            # 添加航线
+            if st.session_state.points_gcj.get('A') and st.session_state.points_gcj.get('B'):
+                folium.PolyLine(
+                    [[st.session_state.points_gcj['A'][1], st.session_state.points_gcj['A'][0]], 
+                     [st.session_state.points_gcj['B'][1], st.session_state.points_gcj['B'][0]]],
+                    color="blue",
+                    weight=3,
+                    opacity=0.8,
+                    popup="规划航线"
+                ).add_to(m)
+            
+            # 添加飞行轨迹
+            if flight_trail and len(flight_trail) > 1:
+                folium.PolyLine(
+                    [[p[1], p[0]] for p in flight_trail],
+                    color="orange",
+                    weight=2,
+                    opacity=0.6,
+                    popup="历史轨迹"
+                ).add_to(m)
+            
+            folium_static(m, width=700, height=550)
             
             st.caption("📌 **图例**：🟢 A点 | 🔴 B点 | 🔴 红色区域=障碍物 | 🔵 蓝色线=规划航线 | 🟠 橙色线=历史轨迹")
     
@@ -388,9 +461,9 @@ def main():
                 st.metric("🛰️ 卫星", latest['satellites'])
             
             # 飞行进度条
-            if st.session_state.points_wgs84['A'] and st.session_state.points_wgs84['B']:
-                a = st.session_state.points_wgs84['A']
-                b = st.session_state.points_wgs84['B']
+            if st.session_state.points_gcj['A'] and st.session_state.points_gcj['B']:
+                a = st.session_state.points_gcj['A']
+                b = st.session_state.points_gcj['B']
                 current = [latest['lng'], latest['lat']]
                 total_dist = math.sqrt((b[0]-a[0])**2 + (b[1]-a[1])**2)
                 current_dist = math.sqrt((current[0]-a[0])**2 + (current[1]-a[1])**2)
@@ -403,7 +476,8 @@ def main():
             monitor_map = folium.Map(
                 location=[latest['lat'], latest['lng']],
                 zoom_start=17,
-                tiles="OpenStreetMap"
+                tiles=current_tile,
+                attr=tile_attr
             )
             
             # 轨迹
@@ -419,11 +493,11 @@ def main():
             ).add_to(monitor_map)
             
             # A/B点
-            if st.session_state.points_wgs84['A']:
-                folium.Marker([st.session_state.points_wgs84['A'][1], st.session_state.points_wgs84['A'][0]], 
+            if st.session_state.points_gcj['A']:
+                folium.Marker([st.session_state.points_gcj['A'][1], st.session_state.points_gcj['A'][0]], 
                              popup="起点 A", icon=folium.Icon(color='green')).add_to(monitor_map)
-            if st.session_state.points_wgs84['B']:
-                folium.Marker([st.session_state.points_wgs84['B'][1], st.session_state.points_wgs84['B'][0]], 
+            if st.session_state.points_gcj['B']:
+                folium.Marker([st.session_state.points_gcj['B'][1], st.session_state.points_gcj['B'][0]], 
                              popup="终点 B", icon=folium.Icon(color='blue')).add_to(monitor_map)
             
             folium_static(monitor_map, width=800, height=400)
@@ -475,17 +549,17 @@ def main():
         
         with col1:
             st.subheader("📝 障碍物列表")
-            st.caption(f"文件状态: 共 {len(st.session_state.obstacles_wgs84)} 个障碍物")
+            st.caption(f"文件状态: 共 {len(st.session_state.obstacles_gcj)} 个障碍物")
             
-            if st.session_state.obstacles_wgs84:
-                for i, obs in enumerate(st.session_state.obstacles_wgs84):
+            if st.session_state.obstacles_gcj:
+                for i, obs in enumerate(st.session_state.obstacles_gcj):
                     col_name, col_btn = st.columns([3, 1])
                     with col_name:
                         st.write(f"🚧 {obs.get('name', f'障碍物{i+1}')}")
                     with col_btn:
                         if st.button("删除", key=f"del_{i}"):
-                            st.session_state.obstacles_wgs84.pop(i)
-                            save_obstacles_to_file(st.session_state.obstacles_wgs84)
+                            st.session_state.obstacles_gcj.pop(i)
+                            save_obstacles_to_file(st.session_state.obstacles_gcj)
                             st.rerun()
             else:
                 st.write("暂无障癢物")
@@ -496,13 +570,13 @@ def main():
             col_save, col_load = st.columns(2)
             with col_save:
                 if st.button("💾 保存到文件", use_container_width=True):
-                    save_obstacles_to_file(st.session_state.obstacles_wgs84)
-                    st.success(f"已保存 {len(st.session_state.obstacles_wgs84)} 个障碍物")
+                    save_obstacles_to_file(st.session_state.obstacles_gcj)
+                    st.success(f"已保存 {len(st.session_state.obstacles_gcj)} 个障碍物")
             with col_load:
                 if st.button("📂 从文件加载", use_container_width=True):
                     loaded = load_obstacles_from_file()
                     if loaded:
-                        st.session_state.obstacles_wgs84 = loaded
+                        st.session_state.obstacles_gcj = loaded
                         st.success(f"已加载 {len(loaded)} 个障碍物")
                         st.rerun()
                     else:
@@ -511,14 +585,14 @@ def main():
             col_clear, col_download = st.columns(2)
             with col_clear:
                 if st.button("🗑️ 清除全部", use_container_width=True):
-                    st.session_state.obstacles_wgs84 = []
+                    st.session_state.obstacles_gcj = []
                     save_obstacles_to_file([])
                     st.rerun()
             with col_download:
                 # 下载配置文件
                 config_data = {
-                    'obstacles': st.session_state.obstacles_wgs84,
-                    'count': len(st.session_state.obstacles_wgs84),
+                    'obstacles': st.session_state.obstacles_gcj,
+                    'count': len(st.session_state.obstacles_gcj),
                     'save_time': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                     'version': 'v12.2'
                 }
@@ -532,7 +606,7 @@ def main():
             
             st.markdown("---")
             st.subheader("➕ 添加障碍物")
-            obs_name = st.text_input("障碍物名称", value=f"障碍物{len(st.session_state.obstacles_wgs84) + 1}")
+            obs_name = st.text_input("障碍物名称", value=f"障碍物{len(st.session_state.obstacles_gcj) + 1}")
             
             st.caption("多边形坐标格式: [[lng, lat], [lng, lat], ...]")
             default_coords = f"[[118.6950, 32.2015], [118.6960, 32.2015], [118.6960, 32.2025], [118.6950, 32.2025]]"
@@ -545,23 +619,24 @@ def main():
                         "name": obs_name,
                         "polygon": coords
                     }
-                    st.session_state.obstacles_wgs84.append(new_obs)
-                    save_obstacles_to_file(st.session_state.obstacles_wgs84)
+                    st.session_state.obstacles_gcj.append(new_obs)
+                    save_obstacles_to_file(st.session_state.obstacles_gcj)
                     st.success(f"已添加障碍物: {obs_name}")
                     st.rerun()
                 except:
                     st.error("坐标格式错误，请使用正确的JSON格式")
         
         with col2:
-            st.subheader("🗺️ 障碍物地图 (OpenStreetMap)")
+            st.subheader("🗺️ 障碍物地图 (高德)")
             
             obs_map = folium.Map(
                 location=[SCHOOL_CENTER_GCJ[1], SCHOOL_CENTER_GCJ[0]],
                 zoom_start=16,
-                tiles="OpenStreetMap"
+                tiles=current_tile,
+                attr=tile_attr
             )
             
-            for obs in st.session_state.obstacles_wgs84:
+            for obs in st.session_state.obstacles_gcj:
                 if obs.get('polygon'):
                     coords = obs['polygon']
                     folium.Polygon(
