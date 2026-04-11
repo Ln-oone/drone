@@ -102,18 +102,13 @@ def save_obstacles_to_file(obstacles):
 
 # ==================== 安全获取多边形坐标 ====================
 def get_polygon_coords(polygon_data):
-    """安全获取多边形坐标，统一转换为 [[lng, lat], ...] 格式"""
     if not polygon_data:
         return []
-    
     try:
-        # 如果已经是坐标列表
         if isinstance(polygon_data, list):
             if len(polygon_data) >= 3:
-                # 检查是否是嵌套格式 [[[lng,lat],...]]
                 if isinstance(polygon_data[0], list) and isinstance(polygon_data[0][0], list):
                     return polygon_data[0]
-                # 已经是 [lng, lat] 格式
                 elif isinstance(polygon_data[0], list) and len(polygon_data[0]) == 2:
                     return polygon_data
         return []
@@ -128,10 +123,12 @@ class HeartbeatSimulator:
         self.target_pos = None
         self.simulating = False
         self.flight_altitude = 50
+        self.speed = 50  # 移动速度系数，越大越快
         
-    def set_target(self, target_gcj, altitude=50):
+    def set_target(self, target_gcj, altitude=50, speed=50):
         self.target_pos = target_gcj
         self.flight_altitude = altitude
+        self.speed = speed
         self.simulating = True
         
     def generate(self):
@@ -140,20 +137,22 @@ class HeartbeatSimulator:
             dy = self.target_pos[1] - self.current_pos[1]
             distance = math.sqrt(dx*dx + dy*dy)
             
-            if distance < 0.00005:
+            if distance < 0.00001:
                 self.simulating = False
             else:
-                step_x = dx / 50
-                step_y = dy / 50
+                # 速度越快，步长越大 (5-100)
+                step_scale = self.speed / 20
+                step_x = dx / max(20, 100 - step_scale)
+                step_y = dy / max(20, 100 - step_scale)
                 self.current_pos[0] += step_x
                 self.current_pos[1] += step_y
         
         if not self.simulating:
             altitude = random.randint(0, 10)
-            speed = 0
+            speed_display = 0
         else:
             altitude = self.flight_altitude + random.randint(-5, 5)
-            speed = round(random.uniform(8, 15), 1)
+            speed_display = round(self.speed * 0.3, 1)
         
         heartbeat = {
             "timestamp": datetime.now().strftime("%H:%M:%S"),
@@ -162,7 +161,7 @@ class HeartbeatSimulator:
             "altitude": altitude,
             "voltage": round(random.uniform(11.5, 12.8), 1),
             "satellites": random.randint(8, 14),
-            "speed": speed,
+            "speed": speed_display,
         }
         
         self.history.insert(0, heartbeat)
@@ -170,9 +169,9 @@ class HeartbeatSimulator:
             self.history.pop()
         return heartbeat
 
-# ==================== 创建地图 ====================
-def create_planning_map(center_gcj, points_gcj, obstacles_gcj, flight_history=None):
-    """创建航线规划地图"""
+# ==================== 创建地图（支持点击选点） ====================
+def create_map_with_picker(center_gcj, points_gcj, obstacles_gcj, flight_history=None, mode="view"):
+    """创建支持点击选点的地图"""
     m = folium.Map(
         location=[center_gcj[1], center_gcj[0]],
         zoom_start=16,
@@ -180,21 +179,25 @@ def create_planning_map(center_gcj, points_gcj, obstacles_gcj, flight_history=No
         attr="高德卫星地图"
     )
     
-    # 添加绘图控件
-    draw = plugins.Draw(
-        export=True,
-        position='topleft',
-        draw_options={
-            'polygon': {'allowIntersection': False, 'showArea': True},
-            'polyline': False,
-            'rectangle': False,
-            'circle': False,
-            'marker': False,
-            'circlemarker': False
-        },
-        edit_options={'edit': True, 'remove': True}
-    )
-    m.add_child(draw)
+    # 添加绘图控件（仅当mode为draw时）
+    if mode == "draw":
+        draw = plugins.Draw(
+            export=True,
+            position='topleft',
+            draw_options={
+                'polygon': {'allowIntersection': False, 'showArea': True},
+                'polyline': False,
+                'rectangle': False,
+                'circle': False,
+                'marker': True,  # 允许添加标记点
+                'circlemarker': False
+            },
+            edit_options={'edit': True, 'remove': True}
+        )
+        m.add_child(draw)
+    
+    # 添加点击获取坐标的插件
+    m.add_child(plugins.LatLngPopup())
     
     # 添加已保存的障碍物多边形
     for i, obs in enumerate(obstacles_gcj):
@@ -271,6 +274,18 @@ def main():
         index=0
     )
     
+    # 无人机速度设置（全局）
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("⚡ 无人机速度设置")
+    drone_speed = st.sidebar.slider(
+        "飞行速度系数", 
+        min_value=10, 
+        max_value=100, 
+        value=50,
+        step=5,
+        help="数值越大，飞行越快（10=很慢，50=正常，100=极快）"
+    )
+    
     # ==================== 初始化 Session State ====================
     if "points_gcj" not in st.session_state:
         st.session_state.points_gcj = {
@@ -292,7 +307,7 @@ def main():
     if "simulation_running" not in st.session_state:
         st.session_state.simulation_running = False
     if "flight_altitude" not in st.session_state:
-        st.session_state.flight_altitude =50
+        st.session_state.flight_altitude = 50
     if "flight_history" not in st.session_state:
         st.session_state.flight_history = []
     
@@ -303,37 +318,70 @@ def main():
     # ==================== 航线规划页面 ====================
     if page == "🗺️ 航线规划":
         st.header("🗺️ 航线规划")
-        st.info("💡 操作说明：左侧输入坐标设置A/B点 | 右侧地图点击左上角画笔图标，手绘多边形添加障碍物")
+        st.info("💡 **两种方式设置A/B点**：1️⃣ 左侧输入经纬度  2️⃣ 右侧地图点击选点（点击地图任意位置获取坐标）")
         
         col1, col2 = st.columns([1, 1.5])
         
         with col1:
             st.subheader("🎮 控制面板")
-            st.caption("📐 输入坐标系：GCJ-02 (高德/百度)")
+            
+            # 方式选择
+            st.markdown("#### 📍 设置航点方式")
+            point_input_method = st.radio(
+                "选择方式",
+                ["✏️ 手动输入经纬度", "🖱️ 地图点击选点"],
+                horizontal=True,
+                help="手动输入：在下方输入坐标；地图点击：在地图上点击位置后点击下方按钮"
+            )
             
             st.markdown("---")
-            st.markdown("#### 🟢 起点 A (南门区域)")
-            a_lat = st.number_input("纬度", value=DEFAULT_A_GCJ[1], format="%.6f", key="a_lat")
-            a_lng = st.number_input("经度", value=DEFAULT_A_GCJ[0], format="%.6f", key="a_lng")
             
-            if st.button("📍 设置 A 点", use_container_width=True, type="primary"):
-                st.session_state.points_gcj['A'] = [a_lng, a_lat]
-                st.session_state.heartbeat_sim.current_pos = [a_lng, a_lat]
-                st.success(f"✅ A点已设置")
+            if point_input_method == "✏️ 手动输入经纬度":
+                st.markdown("#### 🟢 起点 A (南门区域)")
+                a_lat = st.number_input("纬度", value=st.session_state.points_gcj['A'][1], format="%.6f", key="a_lat")
+                a_lng = st.number_input("经度", value=st.session_state.points_gcj['A'][0], format="%.6f", key="a_lng")
+                
+                if st.button("📍 设置 A 点", use_container_width=True, type="primary"):
+                    st.session_state.points_gcj['A'] = [a_lng, a_lat]
+                    st.session_state.heartbeat_sim.current_pos = [a_lng, a_lat]
+                    st.success(f"✅ A点已设置 ({a_lng:.6f}, {a_lat:.6f})")
+                
+                st.markdown("---")
+                st.markdown("#### 🔴 终点 B (北门区域)")
+                b_lat = st.number_input("纬度", value=st.session_state.points_gcj['B'][1], format="%.6f", key="b_lat")
+                b_lng = st.number_input("经度", value=st.session_state.points_gcj['B'][0], format="%.6f", key="b_lng")
+                
+                if st.button("📍 设置 B 点", use_container_width=True, type="primary"):
+                    st.session_state.points_gcj['B'] = [b_lng, b_lat]
+                    st.success(f"✅ B点已设置 ({b_lng:.6f}, {b_lat:.6f})")
             
-            st.markdown("---")
-            st.markdown("#### 🔴 终点 B (北门区域)")
-            b_lat = st.number_input("纬度", value=DEFAULT_B_GCJ[1], format="%.6f", key="b_lat")
-            b_lng = st.number_input("经度", value=DEFAULT_B_GCJ[0], format="%.6f", key="b_lng")
-            
-            if st.button("📍 设置 B 点", use_container_width=True, type="primary"):
-                st.session_state.points_gcj['B'] = [b_lng, b_lat]
-                st.success(f"✅ B点已设置")
+            else:  # 地图点击选点
+                st.info("🖱️ **操作说明**：在右侧地图上点击任意位置，会弹出坐标弹窗，将坐标复制到下方输入框")
+                
+                st.markdown("#### 🟢 起点 A")
+                a_lat_click = st.number_input("纬度", value=st.session_state.points_gcj['A'][1], format="%.6f", key="a_lat_click")
+                a_lng_click = st.number_input("经度", value=st.session_state.points_gcj['A'][0], format="%.6f", key="a_lng_click")
+                
+                if st.button("📌 将点击坐标设为A点", use_container_width=True, type="primary"):
+                    st.session_state.points_gcj['A'] = [a_lng_click, a_lat_click]
+                    st.session_state.heartbeat_sim.current_pos = [a_lng_click, a_lat_click]
+                    st.success(f"✅ A点已设置")
+                
+                st.markdown("#### 🔴 终点 B")
+                b_lat_click = st.number_input("纬度", value=st.session_state.points_gcj['B'][1], format="%.6f", key="b_lat_click")
+                b_lng_click = st.number_input("经度", value=st.session_state.points_gcj['B'][0], format="%.6f", key="b_lng_click")
+                
+                if st.button("📌 将点击坐标设为B点", use_container_width=True, type="primary"):
+                    st.session_state.points_gcj['B'] = [b_lng_click, b_lat_click]
+                    st.success(f"✅ B点已设置")
             
             st.markdown("---")
             st.markdown("#### ✈️ 飞行参数")
             flight_alt = st.number_input("设定飞行高度 (m)", value=50, step=5, min_value=10, max_value=200)
             st.session_state.flight_altitude = flight_alt
+            
+            # 显示当前速度系数
+            st.metric("⚡ 当前速度系数", f"{drone_speed}%", help="速度系数越大，飞行越快")
             
             st.markdown("---")
             
@@ -341,7 +389,11 @@ def main():
             with col_btn1:
                 if st.button("▶️ 开始飞行", use_container_width=True):
                     target = st.session_state.points_gcj['B']
-                    st.session_state.heartbeat_sim.set_target([target[0], target[1]], st.session_state.flight_altitude)
+                    st.session_state.heartbeat_sim.set_target(
+                        [target[0], target[1]], 
+                        st.session_state.flight_altitude,
+                        drone_speed
+                    )
                     st.session_state.simulation_running = True
                     st.success("🚁 飞行已开始！")
             
@@ -354,47 +406,41 @@ def main():
             st.markdown("### 📍 当前航点 (GCJ-02)")
             st.write(f"🟢 A点: ({st.session_state.points_gcj['A'][0]:.6f}, {st.session_state.points_gcj['A'][1]:.6f})")
             st.write(f"🔴 B点: ({st.session_state.points_gcj['B'][0]:.6f}, {st.session_state.points_gcj['B'][1]:.6f})")
+            
+            # 计算距离
+            if st.session_state.points_gcj['A'] and st.session_state.points_gcj['B']:
+                a = st.session_state.points_gcj['A']
+                b = st.session_state.points_gcj['B']
+                dist = math.sqrt((b[0]-a[0])**2 + (b[1]-a[1])**2) * 111000
+                st.caption(f"📏 航线距离: 约 {dist:.0f} 米")
         
         with col2:
-            st.subheader("🗺️ 规划地图 (可手绘多边形添加障碍物)")
-            st.caption("✏️ 点击左上角📐图标，在地图上绘制多边形障碍物")
+            st.subheader("🗺️ 规划地图")
+            st.caption("💡 **点击地图任意位置** → 弹出坐标弹窗 → 复制坐标到左侧输入框")
             
             flight_trail = [[hb['lng'], hb['lat']] for hb in st.session_state.heartbeat_sim.history[:20]]
             center = st.session_state.points_gcj['A'] if st.session_state.points_gcj['A'] else SCHOOL_CENTER_GCJ
             
-            m = create_planning_map(center, st.session_state.points_gcj, st.session_state.obstacles_gcj, flight_trail)
+            # 创建支持点击的地图
+            m = create_map_with_picker(center, st.session_state.points_gcj, st.session_state.obstacles_gcj, flight_trail, mode="pick")
             
-            output = st_folium(m, width=700, height=550, returned_objects=["last_draw"])
+            # 显示地图，捕获点击事件
+            output = st_folium(m, width=700, height=550, returned_objects=["last_clicked"])
             
-            # 处理新绘制的多边形
-            if output and output.get("last_draw"):
-                last_draw = output["last_draw"]
-                if last_draw and last_draw.get("geometry"):
-                    geometry = last_draw["geometry"]
-                    if geometry.get("type") == "Polygon":
-                        coords = geometry.get("coordinates", [])
-                        if coords and len(coords) > 0:
-                            # 提取多边形顶点坐标
-                            polygon_coords = []
-                            for point in coords[0]:
-                                polygon_coords.append([point[0], point[1]])
-                            
-                            if len(polygon_coords) >= 3:
-                                new_obs = {
-                                    "name": f"手绘障碍物{len(st.session_state.obstacles_gcj) + 1}",
-                                    "polygon": polygon_coords
-                                }
-                                st.session_state.obstacles_gcj.append(new_obs)
-                                save_obstacles_to_file(st.session_state.obstacles_gcj)
-                                st.success(f"✅ 已添加手绘障碍物")
-                                st.rerun()
+            # 处理地图点击事件
+            if output and output.get("last_clicked"):
+                clicked = output["last_clicked"]
+                if clicked and clicked.get("lat") and clicked.get("lng"):
+                    st.info(f"📍 点击位置: ({clicked['lng']:.6f}, {clicked['lat']:.6f})")
             
             st.caption("📌 **图例**：🟢 A点 | 🔴 B点 | 🔴 红色区域=障碍物 | 🔵 蓝色线=规划航线 | 🟠 橙色线=历史轨迹")
+            st.caption("✏️ **手绘障碍物**：点击左上角📐图标 → 选择多边形 → 在地图上绘制 → 自动保存")
     
     # ==================== 飞行监控页面 ====================
     elif page == "📡 飞行监控":
         st.header("📡 飞行监控 - 实时心跳包")
         
+        # 更新心跳包时使用当前速度
         current_time = time.time()
         if current_time - st.session_state.last_hb_time >= 1 and st.session_state.simulation_running:
             new_hb = st.session_state.heartbeat_sim.generate()
@@ -407,6 +453,7 @@ def main():
         if st.session_state.heartbeat_sim.history:
             latest = st.session_state.heartbeat_sim.history[0]
             
+            # 指标卡片
             col1, col2, col3, col4, col5, col6 = st.columns(6)
             with col1:
                 st.metric("⏰ 时间", latest['timestamp'])
@@ -421,6 +468,14 @@ def main():
             with col6:
                 st.metric("🛰️ 卫星", latest['satellites'])
             
+            # 速度显示
+            col7, col8 = st.columns(2)
+            with col7:
+                st.metric("💨 当前速度", f"{latest.get('speed', 0)} m/s")
+            with col8:
+                st.metric("⚡ 速度系数", f"{drone_speed}%")
+            
+            # 飞行进度条
             if st.session_state.points_gcj['A'] and st.session_state.points_gcj['B']:
                 a = st.session_state.points_gcj['A']
                 b = st.session_state.points_gcj['B']
@@ -431,6 +486,7 @@ def main():
                     progress = min(1.0, current_dist / total_dist)
                     st.progress(progress, text=f"✈️ 飞行进度: {progress*100:.1f}%")
             
+            # 实时位置地图
             st.subheader("📍 实时位置")
             monitor_map = folium.Map(
                 location=[latest['lat'], latest['lng']],
@@ -458,6 +514,7 @@ def main():
             
             folium_static(monitor_map, width=800, height=400)
             
+            # 数据图表
             st.subheader("📈 数据图表")
             chart_col1, chart_col2 = st.columns(2)
             with chart_col1:
@@ -496,7 +553,7 @@ def main():
     # ==================== 障碍物管理页面 ====================
     elif page == "🚧 障碍物管理":
         st.header("🚧 障碍物管理")
-        st.info("💡 障碍物配置会保存到本地文件，刷新页面不丢失")
+        st.info("💡 障碍物配置会保存到本地文件，刷新页面不丢失。也可以在「航线规划」页面手绘添加。")
         
         col1, col2 = st.columns([1, 1.5])
         
