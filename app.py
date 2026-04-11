@@ -123,7 +123,7 @@ class HeartbeatSimulator:
         self.target_pos = None
         self.simulating = False
         self.flight_altitude = 50
-        self.speed = 50  # 移动速度系数，越大越快
+        self.speed = 50
         
     def set_target(self, target_gcj, altitude=50, speed=50):
         self.target_pos = target_gcj
@@ -140,7 +140,6 @@ class HeartbeatSimulator:
             if distance < 0.00001:
                 self.simulating = False
             else:
-                # 速度越快，步长越大 (5-100)
                 step_scale = self.speed / 20
                 step_x = dx / max(20, 100 - step_scale)
                 step_y = dy / max(20, 100 - step_scale)
@@ -169,9 +168,9 @@ class HeartbeatSimulator:
             self.history.pop()
         return heartbeat
 
-# ==================== 创建地图（支持点击选点） ====================
-def create_map_with_picker(center_gcj, points_gcj, obstacles_gcj, flight_history=None, mode="view"):
-    """创建支持点击选点的地图"""
+# ==================== 创建地图 ====================
+def create_planning_map(center_gcj, points_gcj, obstacles_gcj, flight_history=None):
+    """创建航线规划地图"""
     m = folium.Map(
         location=[center_gcj[1], center_gcj[0]],
         zoom_start=16,
@@ -179,24 +178,23 @@ def create_map_with_picker(center_gcj, points_gcj, obstacles_gcj, flight_history
         attr="高德卫星地图"
     )
     
-    # 添加绘图控件（仅当mode为draw时）
-    if mode == "draw":
-        draw = plugins.Draw(
-            export=True,
-            position='topleft',
-            draw_options={
-                'polygon': {'allowIntersection': False, 'showArea': True},
-                'polyline': False,
-                'rectangle': False,
-                'circle': False,
-                'marker': True,  # 允许添加标记点
-                'circlemarker': False
-            },
-            edit_options={'edit': True, 'remove': True}
-        )
-        m.add_child(draw)
+    # 添加绘图控件
+    draw = plugins.Draw(
+        export=True,
+        position='topleft',
+        draw_options={
+            'polygon': {'allowIntersection': False, 'showArea': True},
+            'polyline': False,
+            'rectangle': False,
+            'circle': False,
+            'marker': True,
+            'circlemarker': False
+        },
+        edit_options={'edit': True, 'remove': True}
+    )
+    m.add_child(draw)
     
-    # 添加点击获取坐标的插件
+    # 添加点击获取坐标的插件（修复：使用正确的方法名）
     m.add_child(plugins.LatLngPopup())
     
     # 添加已保存的障碍物多边形
@@ -422,16 +420,10 @@ def main():
             center = st.session_state.points_gcj['A'] if st.session_state.points_gcj['A'] else SCHOOL_CENTER_GCJ
             
             # 创建支持点击的地图
-            m = create_map_with_picker(center, st.session_state.points_gcj, st.session_state.obstacles_gcj, flight_trail, mode="pick")
+            m = create_planning_map(center, st.session_state.points_gcj, st.session_state.obstacles_gcj, flight_trail)
             
-            # 显示地图，捕获点击事件
-            output = st_folium(m, width=700, height=550, returned_objects=["last_clicked"])
-            
-            # 处理地图点击事件
-            if output and output.get("last_clicked"):
-                clicked = output["last_clicked"]
-                if clicked and clicked.get("lat") and clicked.get("lng"):
-                    st.info(f"📍 点击位置: ({clicked['lng']:.6f}, {clicked['lat']:.6f})")
+            # 显示地图
+            folium_static(m, width=700, height=550)
             
             st.caption("📌 **图例**：🟢 A点 | 🔴 B点 | 🔴 红色区域=障碍物 | 🔵 蓝色线=规划航线 | 🟠 橙色线=历史轨迹")
             st.caption("✏️ **手绘障碍物**：点击左上角📐图标 → 选择多边形 → 在地图上绘制 → 自动保存")
