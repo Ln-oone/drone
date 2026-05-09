@@ -308,149 +308,117 @@ def restore_from_backup(backup_path: str) -> bool:
 
 
 # ==================== 绕行算法 ====================
-def get_blocking_obstacles(
-    start: List[float], end: List[float], 
-    obstacles_gcj: List[Dict], flight_altitude: float
-) -> List[Dict]:
-    """获取阻挡航线的障碍物"""
-    blocking = []
-    for obs in obstacles_gcj:
-        if obs.get('height', 30) > flight_altitude:
-            coords = obs.get('polygon', [])
-            if coords and line_intersects_polygon(start, end, coords):
-                blocking.append(obs)
-    return blocking
-
-
-def find_left_path(
-    start: List[float], end: List[float], 
-    obstacles_gcj: List[Dict], flight_altitude: float, 
-    safety_radius: float = 5
-) -> List[List[float]]:
-    """
-    向左绕行：从顶部绕过障碍物
-    第1段（起点→点1）：最长，垂直向上飞到很高处
-    第2段（点1→点2）：次长，水平向右飞过障碍物顶部
-    第3段（点2→终点）：最短，垂直向下到终点
-    """
-    blocking_obs = get_blocking_obstacles(start, end, obstacles_gcj, flight_altitude)
+def render_path_strategy(flight_alt: float):
+    """渲染路径规划策略"""
+    st.markdown("**选择绕行方向：**")
     
-    if not blocking_obs:
-        return [start, end]
+    # 第一行：主要方向
+    col_dir1, col_dir2, col_dir3, col_dir4 = st.columns(4)
     
-    # 计算所有阻挡障碍物的整体边界
-    max_lng = -float('inf')
-    max_lat = -float('inf')
-    min_lat = float('inf')
+    with col_dir1:
+        if st.button(
+            "🔄 最佳航线", use_container_width=True, 
+            type="primary" if st.session_state.current_direction == "最佳航线" else "secondary"
+        ):
+            st.session_state.current_direction = "最佳航线"
+            st.session_state.planned_path = create_avoidance_path(
+                st.session_state.points_gcj['A'], st.session_state.points_gcj['B'],
+                st.session_state.obstacles_gcj, flight_alt, "最佳航线",
+                st.session_state.safety_radius
+            )
+            stats = calculate_path_statistics(st.session_state.planned_path)
+            st.success(f"已切换到智能避障模式 - 路径长度: {stats['distance_meters']:.0f}米, 航点数: {stats['waypoints']}")
+            st.rerun()
     
-    for obs in blocking_obs:
-        coords = obs.get('polygon', [])
-        if coords:
-            for point in coords:
-                max_lng = max(max_lng, point[0])
-                max_lat = max(max_lat, point[1])
-                min_lat = min(min_lat, point[1])
+    with col_dir2:
+        if st.button(
+            "⬅️ 向左绕行", use_container_width=True,
+            type="primary" if st.session_state.current_direction == "向左绕行" else "secondary"
+        ):
+            st.session_state.current_direction = "向左绕行"
+            st.session_state.planned_path = create_avoidance_path(
+                st.session_state.points_gcj['A'], st.session_state.points_gcj['B'],
+                st.session_state.obstacles_gcj, flight_alt, "向左绕行",
+                st.session_state.safety_radius
+            )
+            stats = calculate_path_statistics(st.session_state.planned_path)
+            st.success(f"已切换到左侧绕行 - 路径长度: {stats['distance_meters']:.0f}米")
+            st.rerun()
     
-    if max_lng == -float('inf'):
-        return [start, end]
+    with col_dir3:
+        if st.button(
+            "➡️ 向右绕行", use_container_width=True,
+            type="primary" if st.session_state.current_direction == "向右绕行" else "secondary"
+        ):
+            st.session_state.current_direction = "向右绕行"
+            st.session_state.planned_path = create_avoidance_path(
+                st.session_state.points_gcj['A'], st.session_state.points_gcj['B'],
+                st.session_state.obstacles_gcj, flight_alt, "向右绕行",
+                st.session_state.safety_radius
+            )
+            stats = calculate_path_statistics(st.session_state.planned_path)
+            st.success(f"已切换到右侧绕行 - 路径长度: {stats['distance_meters']:.0f}米")
+            st.rerun()
     
-    # 安全偏移距离（米转度）
-    safe_lng, safe_lat = meters_to_deg(safety_radius * 3)
+    with col_dir4:
+        if st.button(
+            "⬆️ 上方绕行", use_container_width=True,
+            type="primary" if st.session_state.current_direction == "上方绕行" else "secondary"
+        ):
+            st.session_state.current_direction = "上方绕行"
+            st.session_state.planned_path = create_avoidance_path(
+                st.session_state.points_gcj['A'], st.session_state.points_gcj['B'],
+                st.session_state.obstacles_gcj, flight_alt, "上方绕行",
+                st.session_state.safety_radius
+            )
+            stats = calculate_path_statistics(st.session_state.planned_path)
+            st.success(f"已切换到上方绕行 - 路径长度: {stats['distance_meters']:.0f}米")
+            st.rerun()
     
-    # 计算障碍物的高度
-    obstacle_height = max_lat - min_lat
+    # 第二行：扩展方向
+    st.markdown("**高级绕行策略：**")
+    col_dir5, col_dir6, col_dir7 = st.columns(3)
     
-    # 第1段：起点 → 点1（垂直向上，距离最长）
-    point1 = [
-        start[0] + 0.0012,
-        max_lat + obstacle_height * 3 + safe_lat * 5 + 0.0002
-    ]
+    with col_dir5:
+        if st.button(
+            "⬇️ 下方绕行", use_container_width=True,
+            type="primary" if st.session_state.current_direction == "下方绕行" else "secondary"
+        ):
+            st.session_state.current_direction = "下方绕行"
+            st.session_state.planned_path = create_avoidance_path(
+                st.session_state.points_gcj['A'], st.session_state.points_gcj['B'],
+                st.session_state.obstacles_gcj, flight_alt, "下方绕行",
+                st.session_state.safety_radius
+            )
+            stats = calculate_path_statistics(st.session_state.planned_path)
+            st.success(f"已切换到下方绕行 - 路径长度: {stats['distance_meters']:.0f}米")
+            st.rerun()
     
-    # 第2段：点1 → 点2（水平向右，距离次长）
-    point2 = [
-        max_lng + obstacle_height * 2 + safe_lng * 3,
-        point1[1]
-    ]
+    # 显示当前路径信息
+    st.markdown("---")
+    st.info(f"📌 当前绕行策略: **{st.session_state.current_direction}**")
     
-    # 第3段：点2 → 终点（垂直向下，距离最短）
-    point3 = end
+    if st.session_state.planned_path:
+        stats = calculate_path_statistics(st.session_state.planned_path)
+        col_stat1, col_stat2, col_stat3 = st.columns(3)
+        with col_stat1:
+            st.metric("路径类型", stats['path_type'])
+        with col_stat2:
+            st.metric("航点数量", f"{stats['waypoints']} 个" + ("(含起终点)" if stats['waypoints'] > 2 else ""))
+        with col_stat3:
+            st.metric("路径长度", f"{stats['distance_meters']:.0f} 米")
     
-    return [start, point1, point2, point3]
-
-
-def find_right_path(
-    start: List[float], end: List[float], 
-    obstacles_gcj: List[Dict], flight_altitude: float, 
-    safety_radius: float = 5
-) -> List[List[float]]:
-    """向右绕行路径规划"""
-    blocking_obs = get_blocking_obstacles(start, end, obstacles_gcj, flight_altitude)
-    
-    if not blocking_obs:
-        return [start, end]
-    
-    mid_x = (start[0] + end[0]) / 2
-    mid_y = (start[1] + end[1]) / 2
-    
-    dx = end[0] - start[0]
-    dy = end[1] - start[1]
-    length = math.sqrt(dx * dx + dy * dy)
-    
-    if length == 0:
-        return [start, end]
-    
-    perp_x = dy / length
-    perp_y = -dx / length
-    
-    offset_dist = safety_radius * config.WAYPOINT_OFFSET_FACTOR
-    lat_rad = math.radians(mid_y)
-    lng_scale = 111000 * math.cos(lat_rad)
-    lat_scale = 111000
-    
-    offset_x = perp_x * offset_dist / lng_scale
-    offset_y = perp_y * offset_dist / lat_scale
-    
-    waypoint = [mid_x + offset_x, mid_y + offset_y]
-    
-    return [start, waypoint, end]
-
-
-def calculate_path_length(path: List[List[float]]) -> float:
-    """计算路径总长度（度）"""
-    total = 0.0
-    for i in range(len(path) - 1):
-        total += distance(path[i], path[i + 1])
-    return total
-
-
-def find_best_path(
-    start: List[float], end: List[float], 
-    obstacles_gcj: List[Dict], flight_altitude: float, 
-    safety_radius: float = 5
-) -> List[List[float]]:
-    """选择最佳绕行路径"""
-    left_path = find_left_path(start, end, obstacles_gcj, flight_altitude, safety_radius)
-    right_path = find_right_path(start, end, obstacles_gcj, flight_altitude, safety_radius)
-    
-    left_len = calculate_path_length(left_path)
-    right_len = calculate_path_length(right_path)
-    
-    return left_path if left_len < right_len else right_path
-
-
-def create_avoidance_path(
-    start: List[float], end: List[float], 
-    obstacles_gcj: List[Dict], flight_altitude: float, 
-    direction: str, safety_radius: float = 5
-) -> List[List[float]]:
-    """创建避障路径"""
-    if direction == "向左绕行":
-        return find_left_path(start, end, obstacles_gcj, flight_altitude, safety_radius)
-    elif direction == "向右绕行":
-        return find_right_path(start, end, obstacles_gcj, flight_altitude, safety_radius)
-    else:
-        return find_best_path(start, end, obstacles_gcj, flight_altitude, safety_radius)
-
+    if st.button("🔄 重新规划路径", use_container_width=True):
+        st.session_state.planned_path = create_avoidance_path(
+            st.session_state.points_gcj['A'], st.session_state.points_gcj['B'],
+            st.session_state.obstacles_gcj, flight_alt,
+            st.session_state.current_direction, st.session_state.safety_radius
+        )
+        if st.session_state.planned_path:
+            stats = calculate_path_statistics(st.session_state.planned_path)
+            waypoint_count = len(st.session_state.planned_path) - 2
+            st.success(f"已按照「{st.session_state.current_direction}」规划路径，{waypoint_count}个绕行点，总长{stats['distance_meters']:.0f}米")
+        st.rerun()
 
 # ==================== 心跳包模拟器 ====================
 @dataclass
