@@ -855,9 +855,15 @@ def render_planning_controls(flight_alt: float, drone_speed: int, auto_save: boo
     st.write(f"🔴 B点: ({st.session_state.points_gcj['B'][0]:.6f}, {st.session_state.points_gcj['B'][1]:.6f})")
     
     a, b = st.session_state.points_gcj['A'], st.session_state.points_gcj['B']
-    dist = math.sqrt((b[0] - a[0])**2 + (b[1] - a[1])**2) * 111000
-    st.caption(f"📏 直线距离: {dist:.0f} 米")
-
+    straight_dist = math.sqrt((b[0] - a[0])**2 + (b[1] - a[1])**2) * 111000
+    st.caption(f"📏 直线距离: {straight_dist:.0f} 米")
+    
+    # 显示规划路径信息
+    if st.session_state.planned_path:
+        stats = calculate_path_statistics(st.session_state.planned_path)
+        st.caption(f"🛣️ 规划路径: {stats['distance_meters']:.0f} 米 ({stats['path_type']})")
+        if stats['waypoints'] > 2:
+            st.caption(f"📍 绕行点: {stats['waypoints'] - 2} 个")
 
 def render_point_settings():
     """渲染起点终点设置（支持经纬度输入和鼠标点击）"""
