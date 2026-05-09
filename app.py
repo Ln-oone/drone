@@ -536,8 +536,19 @@ class HeartbeatSimulator:
         
         self.distance_traveled += move_distance
         
+        # 修复：精确计算进度
         if self.total_distance > 0:
-            self.progress = min(1.0, self.distance_traveled / self.total_distance)
+            # 计算已完成的路径长度
+            completed_distance = 0.0
+            for i in range(self.path_index):
+                completed_distance += distance(self.path[i], self.path[i + 1])
+            
+            # 加上当前段的已完成距离
+            if segment_distance > 0:
+                segment_progress = min(1.0, self.distance_traveled / segment_distance)
+                completed_distance += segment_distance * segment_progress
+            
+            self.progress = min(1.0, completed_distance / self.total_distance)
         
         if self.distance_traveled >= segment_distance and self.distance_traveled > 0:
             self.path_index += 1
@@ -1247,41 +1258,53 @@ def render_flight_monitoring_page(map_type: str, flight_alt: float, drone_speed:
     if st.session_state.heartbeat_sim.history:
         latest = st.session_state.heartbeat_sim.history[0]
         
-        # 修复：计算当前航点信息（包括起点和终点）
+        # 修复：计算当前航点信息（实时更新）
         current_waypoint = 0
         total_waypoints = 0
         if st.session_state.planned_path and len(st.session_state.planned_path) > 1:
             # 总航点数 = 路径点数（包括起点和终点）
-            total_waypoints = len(st.session_state.planned_path)  # 现在包括起点和终点
+            total_waypoints = len(st.session_state.planned_path)
+            
             if latest.arrived:
-                # 如果已到达，当前航点应该是最后一个（终点）
+                # 已到达：显示总航点数
                 current_waypoint = total_waypoints
-            elif latest.progress < 1.0:
-                # 计算当前所在的航点（基于进度）
-                segment_index = int(latest.progress * (len(st.session_state.planned_path) - 1))
-                current_waypoint = segment_index + 1  # +1 因为起点算第1个航点
-            else:
-                current_waypoint = total_waypoints
+            elif latest.progress >= 0 and not latest.arrived:
+                # 实时计算当前航段
+                if latest.progress < 1.0:
+                    # 计算当前所在的航段索引
+                    segment_index = int(latest.progress * (len(st.session_state.planned_path) - 1))
+                    # 当前航点 = 已完成的完整航段数 + 1（因为起点算第1个）
+                    current_waypoint = segment_index + 1
+                    # 确保不超过总航点数
+                    current_waypoint = min(current_waypoint, total_waypoints)
+                else:
+                    current_waypoint = total_waypoints
         
-        # 修复：计算剩余距离
+        # 修复：剩余距离计算
         remaining_distance = latest.remaining_distance
         if latest.arrived:
             remaining_distance = 0.0
         elif remaining_distance < 0:
             remaining_distance = 0.0
             
-        # 修复：如果已到达，预计到达时间应显示"已到达"
+        # 修复：预计到达时间逻辑
         estimated_arrival = "计算中..."
         if latest.arrived:
-            estimated_arrival = "已到达"
+            estimated_arrival = "00:00"
         elif latest.speed > 0 and remaining_distance > 0:
             eta_seconds = remaining_distance / latest.speed
             if eta_seconds < 60:
                 estimated_arrival = f"{eta_seconds:.0f}秒"
             elif eta_seconds < 3600:
-                estimated_arrival = f"{eta_seconds/60:.1f}分钟"
+                minutes = int(eta_seconds // 60)
+                seconds = int(eta_seconds % 60)
+                estimated_arrival = f"{minutes:02d}:{seconds:02d}"
             else:
-                estimated_arrival = f"{eta_seconds/3600:.1f}小时"
+                hours = int(eta_seconds // 3600)
+                minutes = int((eta_seconds % 3600) // 60)
+                estimated_arrival = f"{hours:02d}:{minutes:02d}"
+        elif latest.arrived:
+            estimated_arrival = "00:00"
         
         # 计算电量模拟
         max_flight_time = 1800
@@ -1301,14 +1324,14 @@ def render_flight_monitoring_page(map_type: str, flight_alt: float, drone_speed:
         col1, col2, col3 = st.columns(3)
         
         with col1:
-            # 修复：显示航点信息（1/总点数，表示第几个航点）
+            # 修复：实时航点显示
             waypoint_display = f"{current_waypoint} / {total_waypoints}"
             if total_waypoints > 0:
                 waypoint_progress_value = current_waypoint / total_waypoints if current_waypoint <= total_waypoints else 1.0
                 st.metric(
                     label="🎯 当前航点",
                     value=waypoint_display,
-                    delta=None,
+                    delta=f"进度 {int(waypoint_progress_value*100)}%" if not latest.arrived else "已完成",
                     help=f"当前第{current_waypoint}个航点/共{total_waypoints}个航点（包括起点和终点）"
                 )
                 st.progress(waypoint_progress_value, text=f"航点进度: {int(waypoint_progress_value*100)}%")
@@ -1332,9 +1355,13 @@ def render_flight_monitoring_page(map_type: str, flight_alt: float, drone_speed:
                 st.caption(f"≈ {speed_kmh:.1f} km/h")
         
         with col3:
+            # 格式化飞行时间
+            minutes = int(latest.flight_time // 60)
+            seconds = int(latest.flight_time % 60)
+            time_display = f"{minutes:02d}:{seconds:02d}"
             st.metric(
                 label="⏰ 已用时间",
-                value=f"{int(latest.flight_time // 60):02d}:{int(latest.flight_time % 60):02d}",
+                value=time_display,
                 delta=f"{latest.flight_time:.1f}秒" if not latest.arrived else "已完成",
                 help="从起飞开始的累计飞行时间"
             )
@@ -1342,7 +1369,7 @@ def render_flight_monitoring_page(map_type: str, flight_alt: float, drone_speed:
         col4, col5, col6 = st.columns(3)
         
         with col4:
-            # 修复：显示剩余距离（到达后显示0）
+            # 显示剩余距离（到达后显示0）
             if remaining_distance >= 1000:
                 distance_text = f"{remaining_distance/1000:.2f} km"
             else:
@@ -1410,13 +1437,10 @@ def render_flight_monitoring_page(map_type: str, flight_alt: float, drone_speed:
         with col10:
             if latest.arrived:
                 status = "✅ 已完成"
-                status_color = "green"
             elif st.session_state.simulation_running:
                 status = "✈️ 飞行中"
-                status_color = "blue"
             else:
                 status = "⏸️ 已停止"
-                status_color = "orange"
             st.metric(
                 label="📌 飞行状态",
                 value=status,
@@ -1432,7 +1456,9 @@ def render_flight_monitoring_page(map_type: str, flight_alt: float, drone_speed:
             with st.expander("📊 飞行任务总结", expanded=True):
                 col_sum1, col_sum2, col_sum3 = st.columns(3)
                 with col_sum1:
-                    st.metric("总飞行时间", f"{int(latest.flight_time // 60):02d}:{int(latest.flight_time % 60):02d}")
+                    minutes = int(latest.flight_time // 60)
+                    seconds = int(latest.flight_time % 60)
+                    st.metric("总飞行时间", f"{minutes:02d}:{seconds:02d}")
                 with col_sum2:
                     total_distance = st.session_state.heartbeat_sim.total_distance * 111000
                     st.metric("总飞行距离", f"{total_distance:.0f} m")
@@ -1465,7 +1491,6 @@ def render_flight_monitoring_page(map_type: str, flight_alt: float, drone_speed:
             if len(st.session_state.heartbeat_sim.history) > 1:
                 dist_data = []
                 for i, h in enumerate(st.session_state.heartbeat_sim.history[:30]):
-                    # 修复：确保剩余距离不为负数
                     display_remaining = max(0, h.remaining_distance)
                     dist_data.append({"时间(s)": i * config.HEARTBEAT_INTERVAL, "剩余距离(m)": display_remaining})
                 dist_df = pd.DataFrame(dist_data)
@@ -1493,12 +1518,16 @@ def render_flight_monitoring_page(map_type: str, flight_alt: float, drone_speed:
             if len(st.session_state.heartbeat_sim.history) > 1 and total_waypoints > 0:
                 waypoint_data = []
                 for i, h in enumerate(st.session_state.heartbeat_sim.history[:30]):
-                    # 修复：航点进度基于实际完成航点数
                     if h.arrived:
                         hist_waypoint = total_waypoints
                     else:
-                        hist_waypoint = int(h.progress * (total_waypoints - 1)) + 1
-                        hist_waypoint = min(hist_waypoint, total_waypoints)
+                        # 基于进度计算当前航点
+                        if h.progress >= 1.0:
+                            hist_waypoint = total_waypoints
+                        else:
+                            segment_index = int(h.progress * (total_waypoints - 1))
+                            hist_waypoint = segment_index + 1
+                            hist_waypoint = min(hist_waypoint, total_waypoints)
                     waypoint_data.append({"时间(s)": i * config.HEARTBEAT_INTERVAL, "已完成航点": hist_waypoint})
                 waypoint_df = pd.DataFrame(waypoint_data)
                 st.line_chart(waypoint_df, x="时间(s)", y="已完成航点")
@@ -1529,7 +1558,7 @@ def render_flight_monitoring_page(map_type: str, flight_alt: float, drone_speed:
                     waypoint_data = []
                     for i, wp in enumerate(st.session_state.planned_path):
                         waypoint_data.append({
-                            "航点序号": i + 1,  # 从1开始编号
+                            "航点序号": i + 1,
                             "航点类型": "起点" if i == 0 else "终点" if i == len(st.session_state.planned_path)-1 else f"绕行点{i}",
                             "经度": wp[0],
                             "纬度": wp[1]
