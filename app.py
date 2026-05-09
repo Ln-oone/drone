@@ -753,7 +753,10 @@ def init_session_state():
         'current_direction': "最佳航线",
         'safety_radius': config.DEFAULT_SAFETY_RADIUS_METERS,
         'auto_backup': True,
-        'show_rename_dialog': False
+        'show_rename_dialog': False,
+        'waiting_for_start_point': False,  # 等待设置起点
+        'waiting_for_end_point': False,    # 等待设置终点
+        'temp_click_point': None           # 临时存储点击点
     }
     
     for key, value in defaults.items():
@@ -861,7 +864,27 @@ def render_planning_controls(flight_alt: float, drone_speed: int, auto_save: boo
 
 
 def render_point_settings():
-    """渲染起点终点设置"""
+    """渲染起点终点设置（支持经纬度输入和鼠标点击）"""
+    st.markdown("#### 🎯 设置方式选择")
+    
+    # 设置方式选择
+    setting_mode = st.radio(
+        "选择设置方式",
+        ["✏️ 经纬度输入", "🖱️ 鼠标点击设置"],
+        horizontal=True,
+        key="point_setting_mode"
+    )
+    
+    if setting_mode == "✏️ 经纬度输入":
+        # 原有的经纬度输入方式
+        render_coordinate_input()
+    else:
+        # 鼠标点击设置方式
+        render_mouse_click_setting()
+
+
+def render_coordinate_input():
+    """渲染经纬度输入界面"""
     st.markdown("#### 🟢 起点 A")
     col_a1, col_a2 = st.columns(2)
     with col_a1:
@@ -877,11 +900,8 @@ def render_point_settings():
     
     if st.button("📍 设置 A 点", use_container_width=True):
         st.session_state.points_gcj['A'] = [a_lng, a_lat]
-        st.session_state.planned_path = create_avoidance_path(
-            st.session_state.points_gcj['A'], st.session_state.points_gcj['B'],
-            st.session_state.obstacles_gcj, st.session_state.last_flight_altitude,
-            st.session_state.current_direction, st.session_state.safety_radius
-        )
+        update_path_after_point_change()
+        st.success(f"✅ 起点已设置为 ({a_lng:.6f}, {a_lat:.6f})")
         st.rerun()
     
     st.markdown("#### 🔴 终点 B")
@@ -899,12 +919,73 @@ def render_point_settings():
     
     if st.button("📍 设置 B 点", use_container_width=True):
         st.session_state.points_gcj['B'] = [b_lng, b_lat]
-        st.session_state.planned_path = create_avoidance_path(
-            st.session_state.points_gcj['A'], st.session_state.points_gcj['B'],
-            st.session_state.obstacles_gcj, st.session_state.last_flight_altitude,
-            st.session_state.current_direction, st.session_state.safety_radius
-        )
+        update_path_after_point_change()
+        st.success(f"✅ 终点已设置为 ({b_lng:.6f}, {b_lat:.6f})")
         st.rerun()
+
+
+def render_mouse_click_setting():
+    """渲染鼠标点击设置界面"""
+    st.info("💡 提示：点击地图上的任意位置来设置起点或终点")
+    
+    col_status1, col_status2 = st.columns(2)
+    
+    with col_status1:
+        if st.button("🎯 设置起点 (点击地图)", use_container_width=True, type="primary"):
+            st.session_state.waiting_for_start_point = True
+            st.session_state.waiting_for_end_point = False
+            st.info("👉 请在地图上点击选择起点位置")
+            st.rerun()
+    
+    with col_status2:
+        if st.button("📍 设置终点 (点击地图)", use_container_width=True, type="primary"):
+            st.session_state.waiting_for_end_point = True
+            st.session_state.waiting_for_start_point = False
+            st.info("👉 请在地图上点击选择终点位置")
+            st.rerun()
+    
+    # 显示当前等待状态
+    if st.session_state.waiting_for_start_point:
+        st.warning("⏳ 等待设置起点... 请点击地图")
+        st.caption("点击地图上的任意位置即可设置起点")
+    elif st.session_state.waiting_for_end_point:
+        st.warning("⏳ 等待设置终点... 请点击地图")
+        st.caption("点击地图上的任意位置即可设置终点")
+    
+    # 重置按钮
+    if st.session_state.waiting_for_start_point or st.session_state.waiting_for_end_point:
+        if st.button("❌ 取消当前操作", use_container_width=True):
+            st.session_state.waiting_for_start_point = False
+            st.session_state.waiting_for_end_point = False
+            st.session_state.temp_click_point = None
+            st.rerun()
+    
+    st.markdown("---")
+    st.markdown("#### 📍 快速设置")
+    
+    col_reset1, col_reset2 = st.columns(2)
+    with col_reset1:
+        if st.button("🔄 重置到默认起点", use_container_width=True):
+            st.session_state.points_gcj['A'] = config.DEFAULT_A_GCJ.copy()
+            update_path_after_point_change()
+            st.success(f"✅ 起点已重置为默认值")
+            st.rerun()
+    
+    with col_reset2:
+        if st.button("🔄 重置到默认终点", use_container_width=True):
+            st.session_state.points_gcj['B'] = config.DEFAULT_B_GCJ.copy()
+            update_path_after_point_change()
+            st.success(f"✅ 终点已重置为默认值")
+            st.rerun()
+
+
+def update_path_after_point_change():
+    """更新路径（起点或终点改变后调用）"""
+    st.session_state.planned_path = create_avoidance_path(
+        st.session_state.points_gcj['A'], st.session_state.points_gcj['B'],
+        st.session_state.obstacles_gcj, st.session_state.last_flight_altitude,
+        st.session_state.current_direction, st.session_state.safety_radius
+    )
 
 
 def render_path_strategy(flight_alt: float):
@@ -1016,6 +1097,7 @@ def render_planning_map_view(map_type: str, flight_alt: float, straight_blocked:
     if straight_blocked:
         st.caption(f"当前避障策略: {st.session_state.current_direction}")
     st.caption("🟢 绿色=最佳航线 | 🟣 紫色=向左绕行 | 🟠 橙色=向右绕行 | 🔵 蓝色圆圈=安全半径")
+    st.caption("💡 提示：在鼠标点击设置模式下，直接点击地图即可设置起点或终点")
     
     flight_trail = [[hb.lng, hb.lat] for hb in st.session_state.heartbeat_sim.history[:20]]
     center = st.session_state.points_gcj['A'] or config.SCHOOL_CENTER_GCJ
@@ -1036,9 +1118,57 @@ def render_planning_map_view(map_type: str, flight_alt: float, straight_blocked:
         st.session_state.current_direction, st.session_state.safety_radius
     )
     
-    output = st_folium(m, width=700, height=550, returned_objects=["last_active_drawing"])
+    # 添加点击事件监听（用于鼠标设置起终点）
+    click_js = """
+    <script>
+    document.addEventListener('click', function(e) {
+        // 检查是否点击在地图上
+        if (e.target.closest('.folium-map')) {
+            console.log('Map clicked');
+        }
+    });
+    </script>
+    """
     
+    # 使用 st_folium 并捕获点击事件
+    output = st_folium(
+        m, 
+        width=700, 
+        height=550, 
+        returned_objects=["last_active_drawing", "last_clicked"]
+    )
+    
+    # 处理鼠标点击（用于设置起点和终点）
+    handle_map_click(output)
+    
+    # 处理绘图输出（用于添加障碍物）
     handle_drawing_output(output)
+
+
+def handle_map_click(output: Any):
+    """处理地图点击事件（用于设置起点和终点）"""
+    if output and output.get("last_clicked"):
+        clicked = output["last_clicked"]
+        if clicked and isinstance(clicked, dict):
+            lng = clicked.get("lng")
+            lat = clicked.get("lat")
+            
+            if lng is not None and lat is not None:
+                # 检查是否在等待设置起点
+                if st.session_state.waiting_for_start_point:
+                    st.session_state.points_gcj['A'] = [lng, lat]
+                    update_path_after_point_change()
+                    st.session_state.waiting_for_start_point = False
+                    st.success(f"✅ 起点已设置: ({lng:.6f}, {lat:.6f})")
+                    st.rerun()
+                
+                # 检查是否在等待设置终点
+                elif st.session_state.waiting_for_end_point:
+                    st.session_state.points_gcj['B'] = [lng, lat]
+                    update_path_after_point_change()
+                    st.session_state.waiting_for_end_point = False
+                    st.success(f"✅ 终点已设置: ({lng:.6f}, {lat:.6f})")
+                    st.rerun()
 
 
 def handle_drawing_output(output: Any):
