@@ -14,12 +14,15 @@ from dataclasses import dataclass, field
 
 
 # ==================== 配置常量 ====================
+# ==================== 配置常量 ====================
 @dataclass
 class Config:
     """系统配置类"""
     SCHOOL_CENTER_GCJ: List[float] = field(default_factory=lambda: [118.7490, 32.2340])
-    DEFAULT_A_GCJ: List[float] = field(default_factory=lambda: [118.746956, 32.232945])
-    DEFAULT_B_GCJ: List[float] = field(default_factory=lambda: [118.751589, 32.235204])
+    # 修改为图中显示的起点经纬度
+    DEFAULT_A_GCJ: List[float] = field(default_factory=lambda: [118.749021, 32.233727])
+    # 修改为图中显示的终点经纬度
+    DEFAULT_B_GCJ: List[float] = field(default_factory=lambda: [118.749644, 32.236204])
     
     CONFIG_FILE: str = "obstacle_config.json"
     BACKUP_DIR: str = "backups"
@@ -36,11 +39,6 @@ class Config:
     
     VERTICAL_OFFSET_MULTIPLIER: float = 3.0
     WAYPOINT_OFFSET_FACTOR: float = 10.0
-
-
-config = Config()
-os.makedirs(config.BACKUP_DIR, exist_ok=True)
-
 
 # ==================== 几何函数 ====================
 def point_in_polygon(point: List[float], polygon: List[List[float]]) -> bool:
