@@ -14,7 +14,6 @@ from dataclasses import dataclass, field
 
 
 # ==================== 配置常量 ====================
-# ==================== 配置常量 ====================
 @dataclass
 class Config:
     """系统配置类"""
