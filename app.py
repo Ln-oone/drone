@@ -18,10 +18,8 @@ from dataclasses import dataclass, field
 class Config:
     """系统配置类"""
     SCHOOL_CENTER_GCJ: List[float] = field(default_factory=lambda: [118.7490, 32.2340])
-    # 修改为图中显示的起点经纬度
-    DEFAULT_A_GCJ: List[float] = field(default_factory=lambda: [118.749021, 32.233727])
-    # 修改为图中显示的终点经纬度
-    DEFAULT_B_GCJ: List[float] = field(default_factory=lambda: [118.749644, 32.236204])
+    DEFAULT_A_GCJ: List[float] = field(default_factory=lambda: [118.749021, 32.233727])  # 改这里
+    DEFAULT_B_GCJ: List[float] = field(default_factory=lambda: [118.749644, 32.236204])  # 改这里
     
     CONFIG_FILE: str = "obstacle_config.json"
     BACKUP_DIR: str = "backups"
@@ -38,7 +36,7 @@ class Config:
     
     VERTICAL_OFFSET_MULTIPLIER: float = 3.0
     WAYPOINT_OFFSET_FACTOR: float = 10.0
-
+    
 # ==================== 几何函数 ====================
 def point_in_polygon(point: List[float], polygon: List[List[float]]) -> bool:
     """判断点是否在多边形内"""
