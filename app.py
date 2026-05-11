@@ -42,9 +42,9 @@ class Config:
         if self.SCHOOL_CENTER_GCJ is None:
             self.SCHOOL_CENTER_GCJ = [118.7490, 32.2340]
         if self.DEFAULT_A_GCJ is None:
-            self.DEFAULT_A_GCJ = [118.749021, 32.233727]  # 图中显示的起点
+            self.DEFAULT_A_GCJ = [118.749021, 32.233727]
         if self.DEFAULT_B_GCJ is None:
-            self.DEFAULT_B_GCJ = [118.749644, 32.236204]  # 图中显示的终点
+            self.DEFAULT_B_GCJ = [118.749644, 32.236204]
 
 
 config = Config()
@@ -316,7 +316,7 @@ def restore_from_backup(backup_path: str) -> bool:
         return False
 
 
-# ==================== 绕行算法 ====================
+# ==================== 改进的绕行算法 ====================
 
 def get_blocking_obstacles(
     start: List[float], end: List[float], 
@@ -335,8 +335,8 @@ def get_blocking_obstacles(
     return blocking
 
 
-def get_obstacle_bounds(obstacles: List[Dict]) -> Dict:
-    """获取多个障碍物的联合边界"""
+def get_obstacle_bounds_accurate(obstacles: List[Dict], safety_margin_meters: float = 15) -> Dict:
+    """精确计算障碍物包围盒，向外扩展安全距离"""
     if not obstacles:
         return {}
     
@@ -353,7 +353,7 @@ def get_obstacle_bounds(obstacles: List[Dict]) -> Dict:
             min_lat = min(min_lat, point[1])
             max_lat = max(max_lat, point[1])
     
-    margin_lng, margin_lat = meters_to_deg(10)
+    margin_lng, margin_lat = meters_to_deg(safety_margin_meters)
     
     return {
         'min_lng': min_lng - margin_lng,
@@ -367,117 +367,260 @@ def get_obstacle_bounds(obstacles: List[Dict]) -> Dict:
     }
 
 
-def simplify_path(path: List[List[float]], tolerance_deg: float = 0.00005) -> List[List[float]]:
-    """简化路径，移除冗余的中间点"""
+def generate_sine_segment(
+    p1: List[float], p2: List[float], 
+    num_points: int = 10, 
+    amplitude_factor: float = 0.3
+) -> List[List[float]]:
+    """在两个点之间生成正弦曲线路径"""
+    points = []
+    
+    dx = p2[0] - p1[0]
+    dy = p2[1] - p1[1]
+    distance = math.sqrt(dx * dx + dy * dy)
+    
+    if distance < 1e-10:
+        return [p1, p2]
+    
+    ux = dx / distance
+    uy = dy / distance
+    
+    vx = -uy
+    vy = ux
+    
+    amplitude = distance * amplitude_factor
+    
+    for i in range(num_points + 1):
+        t = i / num_points
+        
+        base_x = p1[0] + dx * t
+        base_y = p1[1] + dy * t
+        
+        sine_value = math.sin(t * math.pi) * amplitude
+        
+        offset_x = vx * sine_value
+        offset_y = vy * sine_value
+        
+        point = [base_x + offset_x, base_y + offset_y]
+        points.append(point)
+    
+    return points
+
+
+def simplify_path_advanced(path: List[List[float]], epsilon_deg: float = 0.00002) -> List[List[float]]:
+    """改进的路径简化算法（Douglas-Peucker算法）"""
     if len(path) <= 2:
         return path
     
-    simplified = [path[0]]
-    
-    for i in range(1, len(path) - 1):
-        prev = simplified[-1]
-        curr = path[i]
-        nxt = path[i + 1]
+    def point_line_distance(point: List[float], start: List[float], end: List[float]) -> float:
+        x0, y0 = point
+        x1, y1 = start
+        x2, y2 = end
         
-        dist = point_to_segment_distance_deg(curr, prev, nxt)
+        dx = x2 - x1
+        dy = y2 - y1
         
-        if dist > tolerance_deg:
-            simplified.append(curr)
+        if dx == 0 and dy == 0:
+            return math.sqrt((x0 - x1)**2 + (y0 - y1)**2)
+        
+        t = ((x0 - x1) * dx + (y0 - y1) * dy) / (dx*dx + dy*dy)
+        t = max(0, min(1, t))
+        
+        proj_x = x1 + t * dx
+        proj_y = y1 + t * dy
+        
+        return math.sqrt((x0 - proj_x)**2 + (y0 - proj_y)**2)
     
-    simplified.append(path[-1])
+    def douglas_peucker(points: List[List[float]], epsilon: float) -> List[List[float]]:
+        if len(points) <= 2:
+            return points
+        
+        max_dist = 0
+        max_index = 0
+        start = points[0]
+        end = points[-1]
+        
+        for i in range(1, len(points) - 1):
+            dist = point_line_distance(points[i], start, end)
+            if dist > max_dist:
+                max_dist = dist
+                max_index = i
+        
+        if max_dist > epsilon:
+            left = douglas_peucker(points[:max_index + 1], epsilon)
+            right = douglas_peucker(points[max_index:], epsilon)
+            return left[:-1] + right
+        else:
+            return [start, end]
+    
+    simplified = douglas_peucker(path, epsilon_deg)
+    
+    if len(simplified) < 2:
+        return [path[0], path[-1]]
+    
     return simplified
 
 
-def find_left_path_fixed(
+def find_left_path_improved(
     start: List[float], end: List[float], 
     obstacles_gcj: List[Dict], flight_altitude: float, 
-    safety_radius: float = 5
+    safety_radius: float = 5,
+    num_waypoints: int = 12
 ) -> List[List[float]]:
-    """向左绕行：从障碍物左侧绕过"""
+    """改进的向左绕行：多航点正弦曲线平滑路径"""
     blocking_obs = get_blocking_obstacles(start, end, obstacles_gcj, flight_altitude)
     
     if not blocking_obs:
         return [start, end]
     
-    bounds = get_obstacle_bounds(blocking_obs)
-    safe_margin_lng, safe_margin_lat = meters_to_deg(safety_radius * 2)
+    bounds = get_obstacle_bounds_accurate(blocking_obs, safety_margin_meters=safety_radius * 2)
+    safe_lng, safe_lat = meters_to_deg(safety_radius * 3)
     
-    left_x = bounds['min_lng'] - safe_margin_lng * 3
+    left_x = bounds['min_lng'] - safe_lng * 2
+    
+    start_y = start[1]
+    end_y = end[1]
+    bounds_top = bounds['max_lat']
+    bounds_bottom = bounds['min_lat']
+    
+    if start_y < bounds_bottom and end_y < bounds_bottom:
+        bypass_y = bounds_bottom - safe_lat
+    elif start_y > bounds_top and end_y > bounds_top:
+        bypass_y = bounds_top + safe_lat
+    else:
+        dist_to_top = abs(start_y - bounds_top) + abs(end_y - bounds_top)
+        dist_to_bottom = abs(start_y - bounds_bottom) + abs(end_y - bounds_bottom)
+        
+        if dist_to_top < dist_to_bottom:
+            bypass_y = bounds_top + safe_lat * 2
+        else:
+            bypass_y = bounds_bottom - safe_lat * 2
     
     waypoints = []
     
-    entry_point = [left_x, start[1]]
-    waypoints.append(entry_point)
+    wp1 = [left_x, start_y]
+    waypoints.append(wp1)
     
-    if end[1] < bounds['min_lat']:
-        exit_y = end[1]
-    elif end[1] > bounds['max_lat']:
-        exit_y = end[1]
-    else:
-        dist_to_top = bounds['max_lat'] - end[1]
-        dist_to_bottom = end[1] - bounds['min_lat']
-        if dist_to_top < dist_to_bottom:
-            exit_y = bounds['max_lat'] + safe_margin_lat
-        else:
-            exit_y = bounds['min_lat'] - safe_margin_lat
+    wp2 = [left_x, bypass_y]
+    waypoints.append(wp2)
     
-    exit_point = [left_x, exit_y]
-    waypoints.append(exit_point)
+    wp3 = [left_x - safe_lng, bypass_y]
+    waypoints.append(wp3)
     
-    full_path = [start] + waypoints + [end]
+    wp4 = [left_x, bypass_y]
+    waypoints.append(wp4)
     
-    return simplify_path(full_path)
+    wp5 = [left_x, end_y]
+    waypoints.append(wp5)
+    
+    full_path = [start]
+    
+    full_path.extend(generate_sine_segment(start, wp1, num_waypoints // 3, 0.2))
+    full_path.pop()
+    
+    full_path.extend(generate_sine_segment(wp1, wp2, num_waypoints // 3, 0.3))
+    full_path.pop()
+    
+    full_path.extend(generate_sine_segment(wp2, wp3, num_waypoints // 2, 0.4))
+    full_path.pop()
+    
+    full_path.extend(generate_sine_segment(wp3, wp4, num_waypoints // 2, 0.4))
+    full_path.pop()
+    
+    full_path.extend(generate_sine_segment(wp4, wp5, num_waypoints // 3, 0.3))
+    full_path.pop()
+    
+    full_path.extend(generate_sine_segment(wp5, end, num_waypoints // 3, 0.2))
+    
+    full_path.append(end)
+    
+    return simplify_path_advanced(full_path)
 
 
-def find_right_path_fixed(
+def find_right_path_improved(
     start: List[float], end: List[float], 
     obstacles_gcj: List[Dict], flight_altitude: float, 
-    safety_radius: float = 5
+    safety_radius: float = 5,
+    num_waypoints: int = 12
 ) -> List[List[float]]:
-    """向右绕行：从障碍物右侧绕过"""
+    """改进的向右绕行：多航点正弦曲线平滑路径"""
     blocking_obs = get_blocking_obstacles(start, end, obstacles_gcj, flight_altitude)
     
     if not blocking_obs:
         return [start, end]
     
-    bounds = get_obstacle_bounds(blocking_obs)
-    safe_margin_lng, safe_margin_lat = meters_to_deg(safety_radius * 2)
+    bounds = get_obstacle_bounds_accurate(blocking_obs, safety_margin_meters=safety_radius * 2)
+    safe_lng, safe_lat = meters_to_deg(safety_radius * 3)
     
-    right_x = bounds['max_lng'] + safe_margin_lng * 3
+    right_x = bounds['max_lng'] + safe_lng * 2
+    
+    start_y = start[1]
+    end_y = end[1]
+    bounds_top = bounds['max_lat']
+    bounds_bottom = bounds['min_lat']
+    
+    if start_y < bounds_bottom and end_y < bounds_bottom:
+        bypass_y = bounds_bottom - safe_lat
+    elif start_y > bounds_top and end_y > bounds_top:
+        bypass_y = bounds_top + safe_lat
+    else:
+        dist_to_top = abs(start_y - bounds_top) + abs(end_y - bounds_top)
+        dist_to_bottom = abs(start_y - bounds_bottom) + abs(end_y - bounds_bottom)
+        
+        if dist_to_top < dist_to_bottom:
+            bypass_y = bounds_top + safe_lat * 2
+        else:
+            bypass_y = bounds_bottom - safe_lat * 2
     
     waypoints = []
     
-    entry_point = [right_x, start[1]]
-    waypoints.append(entry_point)
+    wp1 = [right_x, start_y]
+    waypoints.append(wp1)
     
-    if end[1] < bounds['min_lat']:
-        exit_y = end[1]
-    elif end[1] > bounds['max_lat']:
-        exit_y = end[1]
-    else:
-        dist_to_top = bounds['max_lat'] - end[1]
-        dist_to_bottom = end[1] - bounds['min_lat']
-        if dist_to_top < dist_to_bottom:
-            exit_y = bounds['max_lat'] + safe_margin_lat
-        else:
-            exit_y = bounds['min_lat'] - safe_margin_lat
+    wp2 = [right_x, bypass_y]
+    waypoints.append(wp2)
     
-    exit_point = [right_x, exit_y]
-    waypoints.append(exit_point)
+    wp3 = [right_x + safe_lng, bypass_y]
+    waypoints.append(wp3)
     
-    full_path = [start] + waypoints + [end]
+    wp4 = [right_x, bypass_y]
+    waypoints.append(wp4)
     
-    return simplify_path(full_path)
+    wp5 = [right_x, end_y]
+    waypoints.append(wp5)
+    
+    full_path = [start]
+    
+    full_path.extend(generate_sine_segment(start, wp1, num_waypoints // 3, 0.2))
+    full_path.pop()
+    
+    full_path.extend(generate_sine_segment(wp1, wp2, num_waypoints // 3, 0.3))
+    full_path.pop()
+    
+    full_path.extend(generate_sine_segment(wp2, wp3, num_waypoints // 2, 0.4))
+    full_path.pop()
+    
+    full_path.extend(generate_sine_segment(wp3, wp4, num_waypoints // 2, 0.4))
+    full_path.pop()
+    
+    full_path.extend(generate_sine_segment(wp4, wp5, num_waypoints // 3, 0.3))
+    full_path.pop()
+    
+    full_path.extend(generate_sine_segment(wp5, end, num_waypoints // 3, 0.2))
+    
+    full_path.append(end)
+    
+    return simplify_path_advanced(full_path)
 
 
-def find_best_path_fixed(
+def find_best_path_improved(
     start: List[float], end: List[float], 
     obstacles_gcj: List[Dict], flight_altitude: float, 
     safety_radius: float = 5
 ) -> List[List[float]]:
     """选择最佳绕行路径"""
-    left_path = find_left_path_fixed(start, end, obstacles_gcj, flight_altitude, safety_radius)
-    right_path = find_right_path_fixed(start, end, obstacles_gcj, flight_altitude, safety_radius)
+    left_path = find_left_path_improved(start, end, obstacles_gcj, flight_altitude, safety_radius)
+    right_path = find_right_path_improved(start, end, obstacles_gcj, flight_altitude, safety_radius)
     
     left_len = calculate_path_length(left_path)
     right_len = calculate_path_length(right_path)
@@ -485,12 +628,29 @@ def find_best_path_fixed(
     return left_path if left_len < right_len else right_path
 
 
+def generate_straight_path_with_points(
+    start: List[float], end: List[float], 
+    num_points: int = 5
+) -> List[List[float]]:
+    """生成直线路径的中间点"""
+    path = [start]
+    
+    for i in range(1, num_points):
+        t = i / num_points
+        x = start[0] + (end[0] - start[0]) * t
+        y = start[1] + (end[1] - start[1]) * t
+        path.append([x, y])
+    
+    path.append(end)
+    return path
+
+
 def create_avoidance_path(
     start: List[float], end: List[float], 
     obstacles_gcj: List[Dict], flight_altitude: float, 
     direction: str, safety_radius: float = 5
 ) -> List[List[float]]:
-    """创建避障路径"""
+    """创建避障路径（改进版 - 多航点正弦曲线平滑绕行）"""
     if not start or not end or len(start) != 2 or len(end) != 2:
         return [config.DEFAULT_A_GCJ, config.DEFAULT_B_GCJ]
     
@@ -498,12 +658,17 @@ def create_avoidance_path(
         direction = "最佳航线"
     
     try:
+        blocking = get_blocking_obstacles(start, end, obstacles_gcj, flight_altitude)
+        
+        if not blocking:
+            return generate_straight_path_with_points(start, end, 8)
+        
         if direction == "向左绕行":
-            path = find_left_path_fixed(start, end, obstacles_gcj, flight_altitude, safety_radius)
+            path = find_left_path_improved(start, end, obstacles_gcj, flight_altitude, safety_radius, 15)
         elif direction == "向右绕行":
-            path = find_right_path_fixed(start, end, obstacles_gcj, flight_altitude, safety_radius)
+            path = find_right_path_improved(start, end, obstacles_gcj, flight_altitude, safety_radius, 15)
         else:
-            path = find_best_path_fixed(start, end, obstacles_gcj, flight_altitude, safety_radius)
+            path = find_best_path_improved(start, end, obstacles_gcj, flight_altitude, safety_radius)
         
         if not path or len(path) < 2:
             return [start, end]
@@ -785,12 +950,10 @@ def create_planning_map(
             opacity=0.9, popup=f"✈️ {direction}"
         ).add_to(m)
         
-        for i, point in enumerate(planned_path[1:-1]):
-            folium.CircleMarker(
-                [point[1], point[0]], radius=5, color=line_color, 
-                fill=True, fill_color="white", fill_opacity=0.8, 
-                popup=f"航点 {i+1}"
-            ).add_to(m)
+        # 显示航点数量信息
+        waypoint_count = len(planned_path) - 2
+        if waypoint_count > 0:
+            st.caption(f"📌 已生成 {waypoint_count} 个平滑绕行航点")
     
     # 绘制直线航线
     if points_gcj.get('A') and points_gcj.get('B'):
@@ -832,7 +995,6 @@ def create_planning_map(
 # ==================== 辅助UI函数 ====================
 def init_session_state():
     """初始化session state"""
-    # 确保默认值被正确初始化
     default_a = config.DEFAULT_A_GCJ.copy() if config.DEFAULT_A_GCJ else [118.749021, 32.233727]
     default_b = config.DEFAULT_B_GCJ.copy() if config.DEFAULT_B_GCJ else [118.749644, 32.236204]
     
@@ -909,7 +1071,6 @@ def render_sidebar() -> Tuple[str, str, int, float, bool]:
     st.sidebar.subheader("💾 自动保存")
     auto_save = st.sidebar.checkbox("自动保存障碍物", value=st.session_state.auto_backup)
     
-    # 更新safety_radius到session_state
     if safety_radius != st.session_state.safety_radius:
         st.session_state.safety_radius = safety_radius
     
