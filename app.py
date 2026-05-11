@@ -17,9 +17,9 @@ from dataclasses import dataclass, field
 @dataclass
 class Config:
     """系统配置类"""
-    SCHOOL_CENTER_GCJ: List[float] = field(default_factory=lambda: [118.7490, 32.2340])
-    DEFAULT_A_GCJ: List[float] = field(default_factory=lambda: [118.746956, 32.232945])
-    DEFAULT_B_GCJ: List[float] = field(default_factory=lambda: [118.751589, 32.235204])
+    SCHOOL_CENTER_GCJ: List[float] = None
+    DEFAULT_A_GCJ: List[float] = None
+    DEFAULT_B_GCJ: List[float] = None
     
     CONFIG_FILE: str = "obstacle_config.json"
     BACKUP_DIR: str = "backups"
@@ -36,6 +36,15 @@ class Config:
     
     VERTICAL_OFFSET_MULTIPLIER: float = 3.0
     WAYPOINT_OFFSET_FACTOR: float = 10.0
+    
+    def __post_init__(self):
+        """初始化默认值"""
+        if self.SCHOOL_CENTER_GCJ is None:
+            self.SCHOOL_CENTER_GCJ = [118.7490, 32.2340]
+        if self.DEFAULT_A_GCJ is None:
+            self.DEFAULT_A_GCJ = [118.749021, 32.233727]  # 图中显示的起点
+        if self.DEFAULT_B_GCJ is None:
+            self.DEFAULT_B_GCJ = [118.749644, 32.236204]  # 图中显示的终点
 
 
 config = Config()
@@ -307,7 +316,7 @@ def restore_from_backup(backup_path: str) -> bool:
         return False
 
 
-# ==================== 修复后的绕行算法 ====================
+# ==================== 绕行算法 ====================
 
 def get_blocking_obstacles(
     start: List[float], end: List[float], 
@@ -823,10 +832,14 @@ def create_planning_map(
 # ==================== 辅助UI函数 ====================
 def init_session_state():
     """初始化session state"""
+    # 确保默认值被正确初始化
+    default_a = config.DEFAULT_A_GCJ.copy() if config.DEFAULT_A_GCJ else [118.749021, 32.233727]
+    default_b = config.DEFAULT_B_GCJ.copy() if config.DEFAULT_B_GCJ else [118.749644, 32.236204]
+    
     defaults = {
-        'points_gcj': {'A': config.DEFAULT_A_GCJ.copy(), 'B': config.DEFAULT_B_GCJ.copy()},
+        'points_gcj': {'A': default_a, 'B': default_b},
         'obstacles_gcj': load_obstacles(),
-        'heartbeat_sim': HeartbeatSimulator(config.DEFAULT_A_GCJ.copy()),
+        'heartbeat_sim': HeartbeatSimulator(default_a),
         'last_hb_time': time.time(),
         'simulation_running': False,
         'flight_history': [],
@@ -895,6 +908,10 @@ def render_sidebar() -> Tuple[str, str, int, float, bool]:
     st.sidebar.markdown("---")
     st.sidebar.subheader("💾 自动保存")
     auto_save = st.sidebar.checkbox("自动保存障碍物", value=st.session_state.auto_backup)
+    
+    # 更新safety_radius到session_state
+    if safety_radius != st.session_state.safety_radius:
+        st.session_state.safety_radius = safety_radius
     
     return page, map_type, drone_speed, flight_alt, auto_save
 
@@ -1044,16 +1061,18 @@ def render_mouse_click_setting():
     col_reset1, col_reset2 = st.columns(2)
     with col_reset1:
         if st.button("🔄 重置到默认起点", use_container_width=True):
-            st.session_state.points_gcj['A'] = config.DEFAULT_A_GCJ.copy()
+            default_a = config.DEFAULT_A_GCJ.copy() if config.DEFAULT_A_GCJ else [118.749021, 32.233727]
+            st.session_state.points_gcj['A'] = default_a
             update_path_after_point_change()
-            st.success(f"✅ 起点已重置为默认值")
+            st.success(f"✅ 起点已重置为默认值 ({default_a[0]:.6f}, {default_a[1]:.6f})")
             st.rerun()
     
     with col_reset2:
         if st.button("🔄 重置到默认终点", use_container_width=True):
-            st.session_state.points_gcj['B'] = config.DEFAULT_B_GCJ.copy()
+            default_b = config.DEFAULT_B_GCJ.copy() if config.DEFAULT_B_GCJ else [118.749644, 32.236204]
+            st.session_state.points_gcj['B'] = default_b
             update_path_after_point_change()
-            st.success(f"✅ 终点已重置为默认值")
+            st.success(f"✅ 终点已重置为默认值 ({default_b[0]:.6f}, {default_b[1]:.6f})")
             st.rerun()
 
 
