@@ -6,6 +6,7 @@ import random, time, math, json, os, shutil
 from datetime import datetime
 from typing import List, Dict, Optional, Tuple, Any
 import pandas as pd
+import altair as alt
 from dataclasses import dataclass, field
 
 # ==================== 配置 ====================
@@ -242,6 +243,17 @@ class HeartbeatSimulator:
             'speed': h.speed, 'progress': h.progress, 'arrived': h.arrived,
             'safety_violation': h.safety_violation, 'remaining_distance': h.remaining_distance
         } for h in self.flight_log])
+
+# ==================== 图表函数（使用Altair避免加载问题）====================
+def create_line_chart(data, x_col, y_col, title, y_label):
+    if data.empty or len(data) < 2:
+        return st.info(f"⏳ 等待{title}数据...")
+    chart = alt.Chart(data).mark_line(point=True, color='#00ff00').encode(
+        x=alt.X(x_col, title='时间 (秒)'),
+        y=alt.Y(y_col, title=y_label),
+        tooltip=[x_col, y_col]
+    ).properties(title=title, height=300)
+    st.altair_chart(chart, use_container_width=True)
 
 # ==================== 地图创建 ====================
 def create_map(center_gcj, points_gcj, obstacles_gcj, map_type, flight_altitude, planned_path=None, 
@@ -604,47 +616,96 @@ def render_monitoring_page(map_type, flight_alt, drone_speed):
         
         st.markdown("---")
         
-        # 实时图表
+        # 实时图表（使用Altair避免加载问题）
         st.markdown("### 📈 实时数据图表")
+        
         if len(st.session_state.heartbeat_sim.history) > 1:
+            # 准备数据
             history_data = st.session_state.heartbeat_sim.history[:30][::-1]
-            speed_data = [{"时间(s)": i * config.HEARTBEAT_INTERVAL, "速度(m/s)": h.speed} for i, h in enumerate(history_data)]
-            dist_data = [{"时间(s)": i * config.HEARTBEAT_INTERVAL, "剩余距离(m)": max(0, h.remaining_distance)} for i, h in enumerate(history_data)]
+            times = [i * config.HEARTBEAT_INTERVAL for i in range(len(history_data))]
+            
+            # 速度图表
+            speed_df = pd.DataFrame({
+                '时间(秒)': times,
+                '速度(m/s)': [h.speed for h in history_data]
+            })
+            
+            # 剩余距离图表
+            dist_df = pd.DataFrame({
+                '时间(秒)': times,
+                '剩余距离(m)': [max(0, h.remaining_distance) for h in history_data]
+            })
+            
+            # 电池图表
+            battery_pct = []
+            for h in history_data:
+                b = max(0, min(100, (1 - h.flight_time / 1800) * 100))
+                if h.voltage:
+                    v_pct = ((h.voltage - 21.0) / (22.2 - 21.0)) * 100
+                    b = max(0, min(100, (b + v_pct) / 2))
+                battery_pct.append(b)
+            
+            battery_df = pd.DataFrame({
+                '时间(秒)': times,
+                '电量(%)': battery_pct
+            })
+            
+            # 航点图表
+            waypoint_pct = []
+            for h in history_data:
+                if h.arrived or h.progress >= 1.0:
+                    wp = total_waypoints
+                else:
+                    wp = min(int(h.progress * (total_waypoints - 1)) + 1, total_waypoints)
+                waypoint_pct.append(wp / total_waypoints * 100 if total_waypoints > 0 else 100)
+            
+            waypoint_df = pd.DataFrame({
+                '时间(秒)': times,
+                '航点进度(%)': waypoint_pct
+            })
             
             col_ch1, col_ch2 = st.columns(2)
             with col_ch1:
                 st.subheader("📊 速度 vs 时间")
-                st.line_chart(pd.DataFrame(speed_data), x="时间(s)", y="速度(m/s)")
+                if not speed_df.empty:
+                    chart = alt.Chart(speed_df).mark_line(point=True, color='#00ff00').encode(
+                        x='时间(秒)', y='速度(m/s)', tooltip=['时间(秒)', '速度(m/s)']
+                    ).properties(height=300)
+                    st.altair_chart(chart, use_container_width=True)
+                else:
+                    st.info("等待数据...")
+            
             with col_ch2:
                 st.subheader("📏 剩余距离 vs 时间")
-                st.line_chart(pd.DataFrame(dist_data), x="时间(s)", y="剩余距离(m)")
-            
-            # 电池和航点图表
-            battery_data = []
-            waypoint_data = []
-            for i, h in enumerate(history_data):
-                hist_battery = max(0, min(100, (1 - h.flight_time / 1800) * 100))
-                if h.voltage:
-                    hist_voltage_pct = ((h.voltage - 21.0) / (22.2 - 21.0)) * 100
-                    hist_battery = max(0, min(100, (hist_battery + hist_voltage_pct) / 2))
-                battery_data.append({"时间(s)": i * config.HEARTBEAT_INTERVAL, "电量(%)": hist_battery})
-                
-                if h.arrived:
-                    hist_waypoint = total_waypoints
-                elif h.progress >= 1.0:
-                    hist_waypoint = total_waypoints
+                if not dist_df.empty:
+                    chart = alt.Chart(dist_df).mark_line(point=True, color='#ff6600').encode(
+                        x='时间(秒)', y='剩余距离(m)', tooltip=['时间(秒)', '剩余距离(m)']
+                    ).properties(height=300)
+                    st.altair_chart(chart, use_container_width=True)
                 else:
-                    hist_waypoint = min(int(h.progress * (total_waypoints - 1)) + 1, total_waypoints)
-                waypoint_data.append({"时间(s)": i * config.HEARTBEAT_INTERVAL, "已完成航点": hist_waypoint})
+                    st.info("等待数据...")
             
             col_ch3, col_ch4 = st.columns(2)
             with col_ch3:
                 st.subheader("🔋 电量模拟 vs 时间")
-                st.line_chart(pd.DataFrame(battery_data), x="时间(s)", y="电量(%)")
-                st.caption("💡 电量基于电压和飞行时间综合计算")
+                if not battery_df.empty:
+                    chart = alt.Chart(battery_df).mark_line(point=True, color='#00cc00').encode(
+                        x='时间(秒)', y='电量(%)', tooltip=['时间(秒)', '电量(%)']
+                    ).properties(height=300)
+                    st.altair_chart(chart, use_container_width=True)
+                    st.caption("💡 电量基于电压和飞行时间综合计算")
+                else:
+                    st.info("等待数据...")
+            
             with col_ch4:
                 st.subheader("🎯 航点进度")
-                st.line_chart(pd.DataFrame(waypoint_data), x="时间(s)", y="已完成航点")
+                if not waypoint_df.empty:
+                    chart = alt.Chart(waypoint_df).mark_line(point=True, color='#aa66ff').encode(
+                        x='时间(秒)', y='航点进度(%)', tooltip=['时间(秒)', '航点进度(%)']
+                    ).properties(height=300)
+                    st.altair_chart(chart, use_container_width=True)
+                else:
+                    st.info("等待数据...")
         
         st.markdown("---")
         
