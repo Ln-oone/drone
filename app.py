@@ -306,6 +306,7 @@ def restore_from_backup(backup_path: str) -> bool:
         st.error(f"恢复备份失败: {e}")
         return False
 
+
 # ==================== 改进的绕行算法 ====================
 
 def get_intersection_points(
@@ -419,43 +420,6 @@ def is_point_safe(
                 return False
     
     return True
-
-
-def find_safe_forward_point(
-    start: List[float],
-    direction_angle: float,  # 偏移方向角度（弧度）
-    distance_meters: float,
-    obstacles: List[Dict],
-    flight_altitude: float,
-    safety_margin: float = 5.0
-) -> List[float]:
-    """向前寻找安全点（确保不进入任何障碍物）"""
-    
-    # 米转度
-    lat_rad = math.radians(start[1])
-    lng_scale = 111000 * math.cos(lat_rad)
-    lat_scale = 111000
-    
-    # 计算候选点
-    dx = math.cos(direction_angle) * distance_meters / lng_scale
-    dy = math.sin(direction_angle) * distance_meters / lat_scale
-    
-    candidate = [start[0] + dx, start[1] + dy]
-    
-    # 检查候选点是否安全
-    if is_point_safe(candidate, obstacles, flight_altitude, safety_margin):
-        return candidate
-    
-    # 如果不安全，缩短距离尝试
-    for factor in [0.8, 0.6, 0.4, 0.2]:
-        dx = math.cos(direction_angle) * (distance_meters * factor) / lng_scale
-        dy = math.sin(direction_angle) * (distance_meters * factor) / lat_scale
-        candidate = [start[0] + dx, start[1] + dy]
-        
-        if is_point_safe(candidate, obstacles, flight_altitude, safety_margin):
-            return candidate
-    
-    return candidate
 
 
 def find_left_avoidance_path(
@@ -691,46 +655,6 @@ def find_best_avoidance_path(
         return right_path
 
 
-def create_avoidance_path_improved(
-    start: List[float], 
-    end: List[float], 
-    obstacles_gcj: List[Dict], 
-    flight_altitude: float, 
-    direction: str, 
-    safety_radius: float = 5.0
-) -> List[List[float]]:
-    """
-    改进的避障路径创建函数
-    
-    参数:
-        start: 起点坐标 [lng, lat]
-        end: 终点坐标 [lng, lat]
-        obstacles_gcj: 障碍物列表
-        flight_altitude: 飞行高度（米）
-        direction: 绕行方向 ("向左绕行", "向右绕行", "最佳航线")
-        safety_radius: 安全半径（米）
-    
-    返回:
-        路径点列表
-    """
-    
-    # 首先检查所有阻挡障碍物
-    blocking = get_blocking_obstacles_advanced(start, end, obstacles_gcj, flight_altitude)
-    
-    # 如果没有阻挡障碍物，直接直线飞行
-    if not blocking:
-        return [start, end]
-    
-    # 根据方向选择绕行算法
-    if direction == "向左绕行":
-        return find_left_avoidance_path(start, end, obstacles_gcj, flight_altitude, safety_radius)
-    elif direction == "向右绕行":
-        return find_right_avoidance_path(start, end, obstacles_gcj, flight_altitude, safety_radius)
-    else:  # 最佳航线
-        return find_best_avoidance_path(start, end, obstacles_gcj, flight_altitude, safety_radius)
-
-
-# 验证路径是否有效（不后退，不与障碍物相交）
 def validate_path(
     path: List[List[float]], 
     obstacles: List[Dict], 
@@ -807,10 +731,29 @@ def create_avoidance_path(
 ) -> List[List[float]]:
     """
     统一的避障路径创建接口（兼容原有代码）
+    首先判断无人机高度，如果高于所有障碍物则直接穿行
     """
-    return create_avoidance_path_improved(
-        start, end, obstacles_gcj, flight_altitude, direction, safety_radius
-    )
+    # 检查是否有障碍物高度高于飞行高度
+    has_higher_obstacle = False
+    for obs in obstacles_gcj:
+        if obs.get('height', 30) > flight_altitude:
+            # 检查这个障碍物是否阻挡航线
+            coords = obs.get('polygon', [])
+            if coords and line_intersects_polygon(start, end, coords):
+                has_higher_obstacle = True
+                break
+    
+    # 如果没有障碍物高于飞行高度且阻挡航线，直接直线飞行
+    if not has_higher_obstacle:
+        return [start, end]
+    
+    # 否则根据方向选择绕行算法
+    if direction == "向左绕行":
+        return find_left_avoidance_path(start, end, obstacles_gcj, flight_altitude, safety_radius)
+    elif direction == "向右绕行":
+        return find_right_avoidance_path(start, end, obstacles_gcj, flight_altitude, safety_radius)
+    else:  # 最佳航线
+        return find_best_avoidance_path(start, end, obstacles_gcj, flight_altitude, safety_radius)
 
 
 # ==================== 心跳包模拟器 ====================
@@ -1434,7 +1377,16 @@ def render_path_strategy(flight_alt: float):
         )
         if st.session_state.planned_path:
             waypoint_count = len(st.session_state.planned_path) - 2
-            st.success(f"已按照「{st.session_state.current_direction}」规划路径，{waypoint_count}个绕行点")
+            # 验证路径
+            is_valid, msg = validate_path(
+                st.session_state.planned_path,
+                st.session_state.obstacles_gcj,
+                flight_alt
+            )
+            if is_valid:
+                st.success(f"已按照「{st.session_state.current_direction}」规划路径，{waypoint_count}个绕行点")
+            else:
+                st.warning(f"路径已规划，但验证警告: {msg}")
         st.rerun()
 
 
