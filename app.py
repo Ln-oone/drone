@@ -921,6 +921,7 @@ def render_sidebar() -> Tuple[str, int, float, bool]:
         "安全半径 (米)", min_value=1, max_value=20, 
         value=st.session_state.safety_radius, step=1
     )
+    st.session_state.safety_radius = safety_radius
     
     st.sidebar.markdown("---")
     st.sidebar.subheader("💾 自动保存")
@@ -948,14 +949,14 @@ def render_planning_page(drone_speed: int, flight_alt: float, auto_save: bool):
     col1, col2 = st.columns([1, 1.5])
     
     with col1:
-        render_planning_controls(flight_alt, drone_speed, auto_save)
+        render_planning_controls(flight_alt, auto_save)
     
     with col2:
         render_planning_map_view(flight_alt, straight_blocked)
 
 
-def render_planning_controls(flight_alt: float, drone_speed: int, auto_save: bool):
-    """渲染规划控制面板"""
+def render_planning_controls(flight_alt: float, auto_save: bool):
+    """渲染规划控制面板（不包含飞行控制按钮）"""
     st.subheader("🎮 控制面板")
     
     with st.expander("📍 起点/终点设置", expanded=True):
@@ -964,8 +965,8 @@ def render_planning_controls(flight_alt: float, drone_speed: int, auto_save: boo
     with st.expander("🤖 路径规划策略", expanded=True):
         render_path_strategy(flight_alt)
     
-    with st.expander("✈️ 飞行控制", expanded=True):
-        render_flight_controls(flight_alt, drone_speed)
+    with st.expander("✈️ 飞行参数", expanded=True):
+        render_flight_params(flight_alt)
     
     st.markdown("### 📍 当前坐标")
     st.write(f"🟢 A点: ({st.session_state.points_gcj['A'][0]:.6f}, {st.session_state.points_gcj['A'][1]:.6f})")
@@ -1162,46 +1163,21 @@ def render_path_strategy(flight_alt: float):
         st.rerun()
 
 
-def render_flight_controls(flight_alt: float, drone_speed: int):
-    """渲染飞行控制"""
+def render_flight_params(flight_alt: float):
+    """显示飞行参数（不包含控制按钮）"""
     col_met1, col_met2, col_met3 = st.columns(3)
     with col_met1:
         st.metric("当前飞行高度", f"{flight_alt} m")
     with col_met2:
-        st.metric("速度系数", f"{drone_speed}%")
+        st.metric("速度系数", f"{st.session_state.get('drone_speed', 50)}%")
     with col_met3:
         st.metric("🛡️ 安全半径", f"{st.session_state.safety_radius} 米")
     
     if st.session_state.planned_path:
         waypoint_count = len(st.session_state.planned_path) - 2
         st.metric("🎯 绕行点数量", waypoint_count)
-        
         total_dist = calculate_path_length(st.session_state.planned_path) * 111000
         st.caption(f"📏 规划路径总长: {total_dist:.0f} 米")
-    
-    col_btn1, col_btn2 = st.columns(2)
-    with col_btn1:
-        if st.button("▶️ 开始飞行", use_container_width=True, type="primary"):
-            if st.session_state.points_gcj['A'] and st.session_state.points_gcj['B']:
-                path = st.session_state.planned_path or [st.session_state.points_gcj['A'], st.session_state.points_gcj['B']]
-                st.session_state.heartbeat_sim.set_path(
-                    path, flight_alt, drone_speed, st.session_state.safety_radius
-                )
-                st.session_state.simulation_running = True
-                st.session_state.flight_history = []
-                waypoint_count = len(path) - 2
-                st.success(
-                    f"🚁 飞行已开始！{'路径中有' + str(waypoint_count) + '个绕行点' if waypoint_count > 0 else '直线飞行'}"
-                )
-                st.rerun()
-            else:
-                st.error("请先设置起点和终点")
-    
-    with col_btn2:
-        if st.button("⏹️ 停止飞行", use_container_width=True):
-            st.session_state.simulation_running = False
-            st.session_state.heartbeat_sim.simulating = False
-            st.info("飞行已停止")
 
 
 def render_planning_map_view(flight_alt: float, straight_blocked: bool):
@@ -1336,6 +1312,42 @@ def render_obstacle_dialog():
 def render_flight_monitoring_page(flight_alt: float, drone_speed: int):
     """渲染飞行监控页面"""
     st.header("📡 飞行监控 - 实时心跳包")
+    
+    # 飞行控制面板
+    st.subheader("🎮 飞行控制")
+    col_btn1, col_btn2, col_status = st.columns([1, 1, 2])
+    
+    with col_btn1:
+        if st.button("▶️ 开始飞行", use_container_width=True, type="primary"):
+            if st.session_state.points_gcj['A'] and st.session_state.points_gcj['B']:
+                path = st.session_state.planned_path or [st.session_state.points_gcj['A'], st.session_state.points_gcj['B']]
+                st.session_state.heartbeat_sim.set_path(
+                    path, flight_alt, drone_speed, st.session_state.safety_radius
+                )
+                st.session_state.simulation_running = True
+                st.session_state.flight_history = []
+                waypoint_count = len(path) - 2
+                st.success(
+                    f"🚁 飞行已开始！{'路径中有' + str(waypoint_count) + '个绕行点' if waypoint_count > 0 else '直线飞行'}"
+                )
+                st.rerun()
+            else:
+                st.error("请先设置起点和终点")
+    
+    with col_btn2:
+        if st.button("⏹️ 停止飞行", use_container_width=True):
+            st.session_state.simulation_running = False
+            st.session_state.heartbeat_sim.simulating = False
+            st.info("飞行已停止")
+            st.rerun()
+    
+    with col_status:
+        if st.session_state.simulation_running:
+            st.success("✈️ 飞行状态: **飞行中**")
+        else:
+            st.info("⏸️ 飞行状态: **已停止**")
+    
+    st.markdown("---")
     
     # 更新飞行模拟
     update_flight_simulation()
@@ -1670,7 +1682,7 @@ def render_flight_monitoring_page(flight_alt: float, drone_speed: int):
                 st.rerun()
                 
     else:
-        st.info("⏳ 等待心跳数据... 请在「航线规划」页面点击「开始飞行」")
+        st.info("⏳ 等待心跳数据... 请点击「开始飞行」按钮")
         
         st.markdown("---")
         col_tip1, col_tip2, col_tip3 = st.columns(3)
@@ -2204,6 +2216,7 @@ def main():
     
     page, drone_speed, flight_alt, auto_save = render_sidebar()
     st.session_state.auto_backup = auto_save
+    st.session_state.drone_speed = drone_speed  # 保存速度供飞行参数显示使用
     
     if flight_alt != st.session_state.last_flight_altitude:
         st.session_state.last_flight_altitude = flight_alt
