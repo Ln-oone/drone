@@ -304,13 +304,13 @@ def restore_from_backup(backup_path: str) -> bool:
         return False
 
 
-# ==================== 避障路径规划算法 ====================
+# ==================== 重新实现的避障路径规划算法 ====================
 
 def get_blocking_obstacles(
     start: List[float], end: List[float], 
     obstacles_gcj: List[Dict], flight_altitude: float
 ) -> List[Dict]:
-    """获取阻挡航线的障碍物（高度高于飞行高度且与线段相交）"""
+    """获取阻挡航线的障碍物（高度大于飞行高度的）"""
     blocking = []
     for obs in obstacles_gcj:
         if obs.get('height', 30) > flight_altitude:
@@ -320,17 +320,11 @@ def get_blocking_obstacles(
     return blocking
 
 
-def can_fly_direct(
-    start: List[float], end: List[float], 
-    obstacles_gcj: List[Dict], flight_altitude: float
-) -> bool:
-    """判断是否可以直接穿行（飞行高度足够高，无阻挡）"""
-    blocking = get_blocking_obstacles(start, end, obstacles_gcj, flight_altitude)
-    return len(blocking) == 0
-
-
-def get_combined_obstacle_bounds(obstacles: List[Dict]) -> Dict:
-    """获取多个障碍物的组合边界"""
+def get_obstacle_bounds(obstacles: List[Dict]) -> Dict:
+    """获取所有障碍物的边界信息"""
+    if not obstacles:
+        return {'min_lng': 0, 'max_lng': 0, 'min_lat': 0, 'max_lat': 0, 'center_lng': 0, 'center_lat': 0}
+    
     min_lng = float('inf')
     max_lng = -float('inf')
     min_lat = float('inf')
@@ -338,12 +332,11 @@ def get_combined_obstacle_bounds(obstacles: List[Dict]) -> Dict:
     
     for obs in obstacles:
         coords = obs.get('polygon', [])
-        if coords:
-            for point in coords:
-                min_lng = min(min_lng, point[0])
-                max_lng = max(max_lng, point[0])
-                min_lat = min(min_lat, point[1])
-                max_lat = max(max_lat, point[1])
+        for point in coords:
+            min_lng = min(min_lng, point[0])
+            max_lng = max(max_lng, point[0])
+            min_lat = min(min_lat, point[1])
+            max_lat = max(max_lat, point[1])
     
     return {
         'min_lng': min_lng,
@@ -355,189 +348,283 @@ def get_combined_obstacle_bounds(obstacles: List[Dict]) -> Dict:
     }
 
 
-def generate_smooth_waypoints(
-    start: List[float], 
-    target_x: float, 
-    target_y: float,
-    num_waypoints: int
-) -> List[List[float]]:
-    """
-    生成平滑路径的中间航点
-    路径形状：从起点平滑过渡到目标点
-    """
-    waypoints = []
-    
-    for i in range(1, num_waypoints + 1):
-        t = i / (num_waypoints + 1)
-        # 使用平滑插值
-        lng = start[0] + (target_x - start[0]) * t
-        lat = start[1] + (target_y - start[1]) * t
-        waypoints.append([lng, lat])
-    
-    return waypoints
-
-
-def find_path_left_avoidance(
+def can_fly_directly(
     start: List[float], end: List[float], 
-    obstacles_gcj: List[Dict], flight_altitude: float,
-    safety_buffer: float = 15.0,
-    num_waypoints: int = 5
-) -> List[List[float]]:
-    """
-    向左绕行算法
-    策略：从所有阻挡障碍物的左侧绕过
-    路径形状：起点 → 左侧绕行点（与起点同纬度）→ 终点
-    """
-    # 检查是否可以直接飞行
-    if can_fly_direct(start, end, obstacles_gcj, flight_altitude):
-        return [start, end]
-    
-    blocking = get_blocking_obstacles(start, end, obstacles_gcj, flight_altitude)
-    
-    if not blocking:
-        return [start, end]
-    
-    # 获取障碍物组合边界
-    bounds = get_combined_obstacle_bounds(blocking)
-    
-    # 计算安全偏移距离（米转度）
-    safe_lng, safe_lat = meters_to_deg(safety_buffer)
-    
-    # 向左绕行：选择障碍物最左侧再向左偏移
-    left_x = bounds['min_lng'] - safe_lng * 2
-    
-    # 生成绕行路径
-    # 第一阶段：从起点水平向左移动到绕行点
-    waypoint1 = [left_x, start[1]]
-    
-    # 第二阶段：从绕行点垂直移动到终点纬度
-    waypoint2 = [left_x, end[1]]
-    
-    # 构建路径
-    path = [start, waypoint1, waypoint2, end]
-    
-    # 验证路径是否有效，如果还有碰撞则进一步扩大绕行距离
-    for i in range(config.MAX_ITERATIONS):
-        if is_path_clear(path, obstacles_gcj, flight_altitude):
-            break
-        # 扩大绕行距离
-        left_x -= safe_lng * (i + 1)
-        waypoint1 = [left_x, start[1]]
-        waypoint2 = [left_x, end[1]]
-        path = [start, waypoint1, waypoint2, end]
-    
-    return path
-
-
-def find_path_right_avoidance(
-    start: List[float], end: List[float], 
-    obstacles_gcj: List[Dict], flight_altitude: float,
-    safety_buffer: float = 15.0,
-    num_waypoints: int = 5
-) -> List[List[float]]:
-    """
-    向右绕行算法
-    策略：从所有阻挡障碍物的右侧绕过
-    路径形状：起点 → 右侧绕行点（与起点同纬度）→ 终点
-    """
-    # 检查是否可以直接飞行
-    if can_fly_direct(start, end, obstacles_gcj, flight_altitude):
-        return [start, end]
-    
-    blocking = get_blocking_obstacles(start, end, obstacles_gcj, flight_altitude)
-    
-    if not blocking:
-        return [start, end]
-    
-    # 获取障碍物组合边界
-    bounds = get_combined_obstacle_bounds(blocking)
-    
-    # 计算安全偏移距离（米转度）
-    safe_lng, safe_lat = meters_to_deg(safety_buffer)
-    
-    # 向右绕行：选择障碍物最右侧再向右偏移
-    right_x = bounds['max_lng'] + safe_lng * 2
-    
-    # 生成绕行路径
-    # 第一阶段：从起点水平向右移动到绕行点
-    waypoint1 = [right_x, start[1]]
-    
-    # 第二阶段：从绕行点垂直移动到终点纬度
-    waypoint2 = [right_x, end[1]]
-    
-    # 构建路径
-    path = [start, waypoint1, waypoint2, end]
-    
-    # 验证路径是否有效，如果还有碰撞则进一步扩大绕行距离
-    for i in range(config.MAX_ITERATIONS):
-        if is_path_clear(path, obstacles_gcj, flight_altitude):
-            break
-        # 扩大绕行距离
-        right_x += safe_lng * (i + 1)
-        waypoint1 = [right_x, start[1]]
-        waypoint2 = [right_x, end[1]]
-        path = [start, waypoint1, waypoint2, end]
-    
-    return path
-
-
-def find_path_best_avoidance(
-    start: List[float], end: List[float], 
-    obstacles_gcj: List[Dict], flight_altitude: float,
-    safety_buffer: float = 15.0,
-    num_waypoints: int = 5
-) -> List[List[float]]:
-    """
-    最佳航线算法
-    策略：计算左右绕行的路径长度，选择较短的路径
-    """
-    # 如果能直接飞行，直接返回直线
-    if can_fly_direct(start, end, obstacles_gcj, flight_altitude):
-        return [start, end]
-    
-    # 计算左右绕行路径
-    left_path = find_path_left_avoidance(start, end, obstacles_gcj, flight_altitude, safety_buffer, num_waypoints)
-    right_path = find_path_right_avoidance(start, end, obstacles_gcj, flight_altitude, safety_buffer, num_waypoints)
-    
-    # 计算路径长度（米）
-    left_length = calculate_path_length_meters(left_path)
-    right_length = calculate_path_length_meters(right_path)
-    
-    # 返回较短的路径
-    return left_path if left_length <= right_length else right_path
-
-
-def is_path_clear(
-    path: List[List[float]], 
-    obstacles_gcj: List[Dict], 
-    flight_altitude: float
+    obstacles_gcj: List[Dict], flight_altitude: float
 ) -> bool:
-    """检查整条路径是否与任何需要避让的障碍物相交"""
-    for i in range(len(path) - 1):
-        p1, p2 = path[i], path[i + 1]
-        for obs in obstacles_gcj:
-            # 只检查高度高于飞行高度的障碍物
-            if obs.get('height', 30) > flight_altitude:
-                polygon = obs.get('polygon', [])
-                if polygon and line_intersects_polygon(p1, p2, polygon):
-                    return False
+    """判断是否可以直接飞行（无阻挡或高度足够）"""
+    for obs in obstacles_gcj:
+        # 如果障碍物高度低于飞行高度，可以飞越
+        if obs.get('height', 30) <= flight_altitude:
+            continue
+        # 检查是否与障碍物相交
+        coords = obs.get('polygon', [])
+        if coords and line_intersects_polygon(start, end, coords):
+            return False
     return True
 
 
-def calculate_path_length_meters(path: List[List[float]]) -> float:
-    """计算路径总长度（米）"""
-    total = 0.0
-    for i in range(len(path) - 1):
-        total += distance(path[i], path[i + 1]) * 111000
-    return total
+def find_left_avoidance_path(
+    start: List[float], end: List[float], 
+    obstacles_gcj: List[Dict], flight_altitude: float, 
+    safety_radius: float = 5
+) -> List[List[float]]:
+    """
+    向左绕行算法：
+    1. 先检查是否可以直接飞行
+    2. 找到所有阻挡障碍物的左侧边界
+    3. 生成向左凸出的绕行路径（只向前，不后退）
+    """
+    # 检查是否可以直接飞行
+    if can_fly_directly(start, end, obstacles_gcj, flight_altitude):
+        return [start, end]
+    
+    # 获取阻挡的障碍物
+    blocking_obs = get_blocking_obstacles(start, end, obstacles_gcj, flight_altitude)
+    
+    if not blocking_obs:
+        return [start, end]
+    
+    # 获取所有阻挡障碍物的边界
+    bounds = get_obstacle_bounds(blocking_obs)
+    
+    # 计算安全偏移距离（米转度）
+    safe_lng, safe_lat = meters_to_deg(safety_radius * 2)
+    
+    # 计算起点到终点的方向向量
+    dx = end[0] - start[0]
+    dy = end[1] - start[1]
+    total_length = math.sqrt(dx * dx + dy * dy)
+    
+    if total_length == 0:
+        return [start, end]
+    
+    # 归一化方向向量
+    unit_dx = dx / total_length
+    unit_dy = dy / total_length
+    
+    # 左侧法向量（逆时针旋转90度）
+    left_dx = -unit_dy
+    left_dy = unit_dx
+    
+    # 计算绕行点：向左偏移到障碍物左侧，然后向前，再回到终点
+    # 绕行点1：从起点向左偏移，绕过障碍物左侧
+    waypoint1 = [
+        start[0] + left_dx * (abs(bounds['max_lng'] - bounds['min_lng']) * 2 + safe_lng),
+        start[1] + left_dy * (abs(bounds['max_lat'] - bounds['min_lat']) * 2 + safe_lat)
+    ]
+    
+    # 绕行点2：向前移动到终点前方（不后退）
+    # 计算从waypoint1到终点的方向
+    dx_to_end = end[0] - waypoint1[0]
+    dy_to_end = end[1] - waypoint1[1]
+    len_to_end = math.sqrt(dx_to_end * dx_to_end + dy_to_end * dy_to_end)
+    
+    if len_to_end > 0:
+        unit_to_end_dx = dx_to_end / len_to_end
+        unit_to_end_dy = dy_to_end / len_to_end
+        
+        # 确保前进方向（与原始方向夹角小于90度）
+        if unit_to_end_dx * unit_dx + unit_to_end_dy * unit_dy < 0:
+            # 如果方向反了，调整到与原始方向一致
+            waypoint2 = [
+                waypoint1[0] + unit_dx * len_to_end,
+                waypoint1[1] + unit_dy * len_to_end
+            ]
+        else:
+            waypoint2 = end
+    else:
+        waypoint2 = end
+    
+    # 构建路径：起点 -> 绕行点1 -> 绕行点2
+    path = [start, waypoint1]
+    
+    # 只在需要时添加waypoint2（如果不等于终点）
+    if waypoint2 != end:
+        path.append(waypoint2)
+    
+    path.append(end)
+    
+    # 验证路径不与任何障碍物相交
+    path = validate_and_adjust_path(path, obstacles_gcj, flight_altitude, safety_radius)
+    
+    return path
 
 
-def calculate_path_length_deg(path: List[List[float]]) -> float:
-    """计算路径总长度（度）"""
-    total = 0.0
-    for i in range(len(path) - 1):
-        total += distance(path[i], path[i + 1])
-    return total
+def find_right_avoidance_path(
+    start: List[float], end: List[float], 
+    obstacles_gcj: List[Dict], flight_altitude: float, 
+    safety_radius: float = 5
+) -> List[List[float]]:
+    """
+    向右绕行算法：
+    1. 先检查是否可以直接飞行
+    2. 找到所有阻挡障碍物的右侧边界
+    3. 生成向右凸出的绕行路径（只向前，不后退）
+    """
+    # 检查是否可以直接飞行
+    if can_fly_directly(start, end, obstacles_gcj, flight_altitude):
+        return [start, end]
+    
+    # 获取阻挡的障碍物
+    blocking_obs = get_blocking_obstacles(start, end, obstacles_gcj, flight_altitude)
+    
+    if not blocking_obs:
+        return [start, end]
+    
+    # 获取所有阻挡障碍物的边界
+    bounds = get_obstacle_bounds(blocking_obs)
+    
+    # 计算安全偏移距离（米转度）
+    safe_lng, safe_lat = meters_to_deg(safety_radius * 2)
+    
+    # 计算起点到终点的方向向量
+    dx = end[0] - start[0]
+    dy = end[1] - start[1]
+    total_length = math.sqrt(dx * dx + dy * dy)
+    
+    if total_length == 0:
+        return [start, end]
+    
+    # 归一化方向向量
+    unit_dx = dx / total_length
+    unit_dy = dy / total_length
+    
+    # 右侧法向量（顺时针旋转90度）
+    right_dx = unit_dy
+    right_dy = -unit_dx
+    
+    # 计算绕行点：向右偏移到障碍物右侧，然后向前，再回到终点
+    waypoint1 = [
+        start[0] + right_dx * (abs(bounds['max_lng'] - bounds['min_lng']) * 2 + safe_lng),
+        start[1] + right_dy * (abs(bounds['max_lat'] - bounds['min_lat']) * 2 + safe_lat)
+    ]
+    
+    # 绕行点2：向前移动到终点前方（不后退）
+    dx_to_end = end[0] - waypoint1[0]
+    dy_to_end = end[1] - waypoint1[1]
+    len_to_end = math.sqrt(dx_to_end * dx_to_end + dy_to_end * dy_to_end)
+    
+    if len_to_end > 0:
+        unit_to_end_dx = dx_to_end / len_to_end
+        unit_to_end_dy = dy_to_end / len_to_end
+        
+        # 确保前进方向（与原始方向夹角小于90度）
+        if unit_to_end_dx * unit_dx + unit_to_end_dy * unit_dy < 0:
+            waypoint2 = [
+                waypoint1[0] + unit_dx * len_to_end,
+                waypoint1[1] + unit_dy * len_to_end
+            ]
+        else:
+            waypoint2 = end
+    else:
+        waypoint2 = end
+    
+    # 构建路径
+    path = [start, waypoint1]
+    if waypoint2 != end:
+        path.append(waypoint2)
+    path.append(end)
+    
+    # 验证路径
+    path = validate_and_adjust_path(path, obstacles_gcj, flight_altitude, safety_radius)
+    
+    return path
+
+
+def find_best_avoidance_path(
+    start: List[float], end: List[float], 
+    obstacles_gcj: List[Dict], flight_altitude: float, 
+    safety_radius: float = 5
+) -> List[List[float]]:
+    """
+    最佳航线算法：
+    1. 先检查是否可以直接飞行
+    2. 比较向左和向右绕行的路径长度
+    3. 选择较短的路径
+    4. 确保路径只向前，不后退
+    """
+    # 检查是否可以直接飞行
+    if can_fly_directly(start, end, obstacles_gcj, flight_altitude):
+        return [start, end]
+    
+    # 计算向左和向右的路径
+    left_path = find_left_avoidance_path(start, end, obstacles_gcj, flight_altitude, safety_radius)
+    right_path = find_right_avoidance_path(start, end, obstacles_gcj, flight_altitude, safety_radius)
+    
+    # 计算路径长度并选择较短的
+    left_length = calculate_path_length(left_path)
+    right_length = calculate_path_length(right_path)
+    
+    # 确保路径不后退且距离为正
+    if left_length > 0 and right_length > 0:
+        return left_path if left_length < right_length else right_path
+    elif left_length > 0:
+        return left_path
+    elif right_length > 0:
+        return right_path
+    else:
+        return [start, end]
+
+
+def validate_and_adjust_path(
+    path: List[List[float]], 
+    obstacles_gcj: List[Dict], 
+    flight_altitude: float,
+    safety_radius: float
+) -> List[List[float]]:
+    """
+    验证并调整路径，确保不与任何障碍物相交，且所有前进距离为正
+    """
+    if len(path) < 2:
+        return path
+    
+    validated_path = [path[0]]
+    
+    for i in range(1, len(path)):
+        current = validated_path[-1]
+        target = path[i]
+        
+        # 检查当前段是否与任何障碍物相交
+        intersects = False
+        for obs in obstacles_gcj:
+            if obs.get('height', 30) > flight_altitude:
+                coords = obs.get('polygon', [])
+                if coords and line_intersects_polygon(current, target, coords):
+                    intersects = True
+                    break
+        
+        # 检查前进距离是否为正
+        dx = target[0] - current[0]
+        dy = target[1] - current[1]
+        distance = math.sqrt(dx * dx + dy * dy)
+        
+        if not intersects and distance > 0:
+            validated_path.append(target)
+        else:
+            # 如果相交或距离为0，尝试添加中间点
+            if distance > 0:
+                # 在中间插入一个偏移点
+                mid_point = [
+                    (current[0] + target[0]) / 2,
+                    (current[1] + target[1]) / 2
+                ]
+                # 向垂直方向偏移
+                perp_dx = -dy / distance
+                perp_dy = dx / distance
+                safe_lng, safe_lat = meters_to_deg(safety_radius * 2)
+                offset_point = [
+                    mid_point[0] + perp_dx * safe_lng,
+                    mid_point[1] + perp_dy * safe_lat
+                ]
+                validated_path.append(offset_point)
+                validated_path.append(target)
+    
+    # 确保终点是原来的终点
+    if validated_path[-1] != path[-1]:
+        validated_path.append(path[-1])
+    
+    return validated_path
 
 
 def create_avoidance_path(
@@ -545,23 +632,47 @@ def create_avoidance_path(
     obstacles_gcj: List[Dict], flight_altitude: float, 
     direction: str, safety_radius: float = 5
 ) -> List[List[float]]:
-    """创建避障路径的统一接口"""
-    # 使用安全缓冲区
-    safety_buffer = max(safety_radius, config.SAFETY_BUFFER_METERS)
-    num_waypoints = max(3, config.NUM_WAYPOINTS)
+    """
+    创建避障路径的统一接口
+    """
+    if direction == "向左绕行":
+        path = find_left_avoidance_path(start, end, obstacles_gcj, flight_altitude, safety_radius)
+    elif direction == "向右绕行":
+        path = find_right_avoidance_path(start, end, obstacles_gcj, flight_altitude, safety_radius)
+    elif direction == "最佳航线":
+        path = find_best_avoidance_path(start, end, obstacles_gcj, flight_altitude, safety_radius)
+    else:
+        # 默认使用最佳航线
+        path = find_best_avoidance_path(start, end, obstacles_gcj, flight_altitude, safety_radius)
     
-    # 首先检查是否可以直接飞行
-    if can_fly_direct(start, end, obstacles_gcj, flight_altitude):
+    # 确保路径至少有两个点
+    if len(path) < 2:
         return [start, end]
     
-    # 根据方向选择算法
-    if direction == "向左绕行":
-        return find_path_left_avoidance(start, end, obstacles_gcj, flight_altitude, safety_buffer, num_waypoints)
-    elif direction == "向右绕行":
-        return find_path_right_avoidance(start, end, obstacles_gcj, flight_altitude, safety_buffer, num_waypoints)
-    else:  # "最佳航线"
-        return find_path_best_avoidance(start, end, obstacles_gcj, flight_altitude, safety_buffer, num_waypoints)
+    return path
 
+
+def calculate_path_length_forward_only(path: List[List[float]]) -> float:
+    """
+    计算路径总长度，确保只计算前进方向（不后退）
+    """
+    if len(path) < 2:
+        return 0.0
+    
+    total = 0.0
+    for i in range(len(path) - 1):
+        dx = path[i+1][0] - path[i][0]
+        dy = path[i+1][1] - path[i][1]
+        seg_length = math.sqrt(dx*dx + dy*dy)
+        # 只累加正的距离
+        if seg_length > 0:
+            total += seg_length
+    
+    return total
+
+
+# 替换原来的 find_left_path, find_right_path, find_best_path 函数
+# 将原来的函数替换为新的实现
 
 # ==================== 心跳包模拟器 ====================
 @dataclass
