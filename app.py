@@ -36,7 +36,7 @@ class Config:
     
     # 避障参数
     SAFE_OFFSET_METERS: float = 20.0
-    OBSTACLE_MARGIN_FACTOR: float = 1.5
+    MAX_WAYPOINTS: int = 10
 
 
 config = Config()
@@ -52,7 +52,6 @@ def point_in_polygon(point: List[float], polygon: List[List[float]]) -> bool:
     for i in range(n):
         x1, y1 = polygon[i]
         x2, y2 = polygon[(i + 1) % n]
-        # 检查射线是否与边相交
         if ((y1 > y) != (y2 > y)) and (x < (x2 - x1) * (y - y1) / (y2 - y1) + x1):
             inside = not inside
     return inside
@@ -79,10 +78,8 @@ def segments_intersect(p1: List[float], p2: List[float], p3: List[float], p4: Li
     o3 = orientation(p3, p4, p1)
     o4 = orientation(p3, p4, p2)
     
-    # 一般情况
     if o1 != o2 and o3 != o4:
         return True
-    # 特殊情况：共线
     if o1 == 0 and on_segment(p1, p3, p2):
         return True
     if o2 == 0 and on_segment(p1, p4, p2):
@@ -96,10 +93,8 @@ def segments_intersect(p1: List[float], p2: List[float], p3: List[float], p4: Li
 
 def line_intersects_polygon(p1: List[float], p2: List[float], polygon: List[List[float]]) -> bool:
     """判断线段是否与多边形相交"""
-    # 检查端点是否在多边形内
     if point_in_polygon(p1, polygon) or point_in_polygon(p2, polygon):
         return True
-    # 检查线段是否与多边形的边相交
     n = len(polygon)
     for i in range(n):
         p3 = polygon[i]
@@ -136,6 +131,28 @@ def get_polygon_bounds(polygon: List[List[float]]) -> Optional[Dict]:
         'max_lat': max_lat,
         'center_lng': (min_lng + max_lng) / 2,
         'center_lat': (min_lat + max_lat) / 2
+    }
+
+
+def get_buffer_boundary(obstacle: Dict, safety_radius: float) -> Optional[Dict]:
+    """获取障碍物的安全缓冲区边界"""
+    polygon = obstacle.get('polygon', [])
+    if not polygon or len(polygon) < 3:
+        return None
+    
+    bounds = get_polygon_bounds(polygon)
+    if not bounds:
+        return None
+    
+    lng_offset, lat_offset = meters_to_deg(safety_radius, bounds['center_lat'])
+    
+    return {
+        'min_lng': bounds['min_lng'] - lng_offset,
+        'max_lng': bounds['max_lng'] + lng_offset,
+        'min_lat': bounds['min_lat'] - lat_offset,
+        'max_lat': bounds['max_lat'] + lat_offset,
+        'center_lng': bounds['center_lng'],
+        'center_lat': bounds['center_lat']
     }
 
 
@@ -193,7 +210,7 @@ def check_safety_radius(drone_pos: List[float], obstacles_gcj: List[Dict],
     return True, min_distance if min_distance != float('inf') else None, None
 
 
-# ==================== 避障路径规划算法（核心重写）====================
+# ==================== 避障路径规划算法 ====================
 
 def get_blocking_obstacles(start: List[float], end: List[float], 
                            obstacles: List[Dict], flight_altitude: float) -> List[Dict]:
@@ -214,67 +231,86 @@ def can_fly_direct(start: List[float], end: List[float],
     return len(blocking) == 0
 
 
-def get_combined_obstacle_bounds(obstacles: List[Dict], flight_altitude: float) -> Optional[Dict]:
-    """获取所有阻挡障碍物的组合边界"""
-    bounds_list = []
+def get_combined_buffer_boundary(obstacles: List[Dict], safety_radius: float) -> Optional[Dict]:
+    """获取所有阻挡障碍物的组合缓冲区边界"""
+    buffer_list = []
     for obs in obstacles:
-        if obs.get('height', 30) > flight_altitude:
-            bounds = get_polygon_bounds(obs.get('polygon', []))
-            if bounds:
-                bounds_list.append(bounds)
+        buffer = get_buffer_boundary(obs, safety_radius)
+        if buffer:
+            buffer_list.append(buffer)
     
-    if not bounds_list:
+    if not buffer_list:
         return None
     
     return {
-        'min_lng': min(b['min_lng'] for b in bounds_list),
-        'max_lng': max(b['max_lng'] for b in bounds_list),
-        'min_lat': min(b['min_lat'] for b in bounds_list),
-        'max_lat': max(b['max_lat'] for b in bounds_list),
-        'center_lng': (min(b['min_lng'] for b in bounds_list) + max(b['max_lng'] for b in bounds_list)) / 2,
-        'center_lat': (min(b['min_lat'] for b in bounds_list) + max(b['max_lat'] for b in bounds_list)) / 2
+        'min_lng': min(b['min_lng'] for b in buffer_list),
+        'max_lng': max(b['max_lng'] for b in buffer_list),
+        'min_lat': min(b['min_lat'] for b in buffer_list),
+        'max_lat': max(b['max_lat'] for b in buffer_list),
+        'center_lng': (min(b['min_lng'] for b in buffer_list) + max(b['max_lng'] for b in buffer_list)) / 2,
+        'center_lat': (min(b['min_lat'] for b in buffer_list) + max(b['max_lat'] for b in buffer_list)) / 2
     }
+
+
+def generate_multi_waypoint_path(start: List[float], end: List[float], 
+                                  boundary_lng: float, is_left: bool,
+                                  bounds: Dict, safety_radius: float) -> List[List[float]]:
+    """
+    生成多航点绕行路径
+    航点数量根据障碍物尺寸动态调整（最多MAX_WAYPOINTS个）
+    """
+    path = [start]
+    
+    # 计算航点数量（根据障碍物垂直范围）
+    lat_range = bounds['max_lat'] - bounds['min_lat']
+    # 航点数量：至少2个（上下各一个），最多MAX_WAYPOINTS个
+    num_waypoints = min(config.MAX_WAYPOINTS, max(3, int(lat_range * 111000 / 20) + 2))
+    
+    # 计算绕行纬度点
+    start_lat = start[1]
+    end_lat = end[1]
+    
+    # 确定绕行纬度范围
+    min_lat = min(start_lat, bounds['min_lat'], end_lat) - meters_to_deg(safety_radius, start_lat)[1]
+    max_lat = max(start_lat, bounds['max_lat'], end_lat) + meters_to_deg(safety_radius, start_lat)[1]
+    
+    # 生成绕行航点
+    for i in range(num_waypoints):
+        t = (i + 1) / (num_waypoints + 1)
+        lat = start_lat + t * (end_lat - start_lat)
+        # 确保纬度在安全范围内
+        lat = max(min_lat, min(max_lat, lat))
+        path.append([boundary_lng, lat])
+    
+    path.append(end)
+    return path
 
 
 def find_left_avoidance_path(start: List[float], end: List[float],
                               obstacles: List[Dict], flight_altitude: float,
                               safety_radius: float) -> List[List[float]]:
     """
-    向左绕行算法
-    从所有障碍物的左侧绕行，生成路径：起点 → 左侧上方 → 左侧下方 → 终点
+    向左绕行算法 - 航线紧贴安全缓冲区外侧
+    路径从所有障碍物的左侧缓冲区边界绕过
     """
-    # 如果可以直接飞行，返回直线
     if can_fly_direct(start, end, obstacles, flight_altitude):
         return [start, end]
     
-    # 获取组合障碍物边界
-    combined_bounds = get_combined_obstacle_bounds(obstacles, flight_altitude)
-    if not combined_bounds:
+    blocking_obs = get_blocking_obstacles(start, end, obstacles, flight_altitude)
+    
+    if not blocking_obs:
         return [start, end]
     
-    # 计算安全偏移量（米转度）
-    lng_offset, lat_offset = meters_to_deg(safety_radius * config.OBSTACLE_MARGIN_FACTOR, start[1])
+    # 获取组合缓冲区边界
+    combined_buffer = get_combined_buffer_boundary(blocking_obs, safety_radius)
+    if not combined_buffer:
+        return [start, end]
     
-    # 左侧绕行点经度 = 障碍物最小经度 - 偏移量
-    left_lng = combined_bounds['min_lng'] - lng_offset
+    # 左侧绕行经度 = 缓冲区最小经度
+    left_boundary_lng = combined_buffer['min_lng']
     
-    # 绕行点纬度范围（扩展障碍物的纬度范围）
-    min_lat = min(start[1], combined_bounds['min_lat'], end[1]) - lat_offset
-    max_lat = max(start[1], combined_bounds['max_lat'], end[1]) + lat_offset
-    
-    # 生成绕行路径（确保不后退）
-    path = [start]
-    
-    # 第一个绕行点：向左然后向上/下
-    waypoint1 = [left_lng, start[1]]
-    path.append(waypoint1)
-    
-    # 第二个绕行点：向左然后到目标纬度
-    waypoint2 = [left_lng, end[1]]
-    path.append(waypoint2)
-    
-    # 终点
-    path.append(end)
+    # 生成多航点路径
+    path = generate_multi_waypoint_path(start, end, left_boundary_lng, True, combined_buffer, safety_radius)
     
     return path
 
@@ -283,37 +319,27 @@ def find_right_avoidance_path(start: List[float], end: List[float],
                                obstacles: List[Dict], flight_altitude: float,
                                safety_radius: float) -> List[List[float]]:
     """
-    向右绕行算法
-    从所有障碍物的右侧绕行，生成路径：起点 → 右侧上方 → 右侧下方 → 终点
+    向右绕行算法 - 航线紧贴安全缓冲区外侧
+    路径从所有障碍物的右侧缓冲区边界绕过
     """
-    # 如果可以直接飞行，返回直线
     if can_fly_direct(start, end, obstacles, flight_altitude):
         return [start, end]
     
-    # 获取组合障碍物边界
-    combined_bounds = get_combined_obstacle_bounds(obstacles, flight_altitude)
-    if not combined_bounds:
+    blocking_obs = get_blocking_obstacles(start, end, obstacles, flight_altitude)
+    
+    if not blocking_obs:
         return [start, end]
     
-    # 计算安全偏移量（米转度）
-    lng_offset, lat_offset = meters_to_deg(safety_radius * config.OBSTACLE_MARGIN_FACTOR, start[1])
+    # 获取组合缓冲区边界
+    combined_buffer = get_combined_buffer_boundary(blocking_obs, safety_radius)
+    if not combined_buffer:
+        return [start, end]
     
-    # 右侧绕行点经度 = 障碍物最大经度 + 偏移量
-    right_lng = combined_bounds['max_lng'] + lng_offset
+    # 右侧绕行经度 = 缓冲区最大经度
+    right_boundary_lng = combined_buffer['max_lng']
     
-    # 生成绕行路径
-    path = [start]
-    
-    # 第一个绕行点：向右然后向上/下
-    waypoint1 = [right_lng, start[1]]
-    path.append(waypoint1)
-    
-    # 第二个绕行点：向右然后到目标纬度
-    waypoint2 = [right_lng, end[1]]
-    path.append(waypoint2)
-    
-    # 终点
-    path.append(end)
+    # 生成多航点路径
+    path = generate_multi_waypoint_path(start, end, right_boundary_lng, False, combined_buffer, safety_radius)
     
     return path
 
@@ -334,7 +360,6 @@ def find_best_avoidance_path(start: List[float], end: List[float],
     left_length = calculate_path_length(left_path)
     right_length = calculate_path_length(right_path)
     
-    # 存储路径长度用于显示
     st.session_state.last_path_lengths = {
         'left': left_length * 111000,
         'right': right_length * 111000,
@@ -352,42 +377,19 @@ def calculate_path_length(path: List[List[float]]) -> float:
     return total
 
 
-def validate_path_no_backtracking(path: List[List[float]]) -> bool:
-    """验证路径没有后退（经度方向不出现负数前进）"""
-    if len(path) < 2:
-        return True
-    
-    # 检查整体方向：从起点到终点，经度应该单调变化
-    start_lng = path[0][0]
-    end_lng = path[-1][0]
-    
-    for i in range(1, len(path)):
-        # 如果起点在终点左边，路径应该向右（经度增加）
-        if start_lng <= end_lng:
-            if path[i][0] < path[i-1][0] - 1e-10:
-                return False
-        # 如果起点在终点右边，路径应该向左（经度减少）
-        else:
-            if path[i][0] > path[i-1][0] + 1e-10:
-                return False
-    
-    return True
-
-
 def clean_path(path: List[List[float]]) -> List[List[float]]:
-    """清理路径，移除冗余的中间点"""
+    """清理路径，移除冗余的共线点"""
     if len(path) < 3:
         return path
     
     cleaned = [path[0]]
     
     for i in range(1, len(path) - 1):
-        # 检查中间点是否必要
         prev = cleaned[-1]
         curr = path[i]
         nxt = path[i + 1]
         
-        # 如果三点共线，可以移除中间点
+        # 如果三点不共线，保留中间点
         if orientation(prev, curr, nxt) != 0:
             cleaned.append(curr)
     
@@ -400,22 +402,17 @@ def create_avoidance_path(start: List[float], end: List[float],
                            direction: str, safety_radius: float = 5) -> List[List[float]]:
     """创建避障路径的统一接口"""
     
-    # 如果可以直接飞行，返回直线
     if can_fly_direct(start, end, obstacles_gcj, flight_altitude):
         return [start, end]
     
-    # 根据方向选择算法
     if direction == "向左绕行":
         path = find_left_avoidance_path(start, end, obstacles_gcj, flight_altitude, safety_radius)
     elif direction == "向右绕行":
         path = find_right_avoidance_path(start, end, obstacles_gcj, flight_altitude, safety_radius)
-    else:  # "最佳航线"
+    else:
         path = find_best_avoidance_path(start, end, obstacles_gcj, flight_altitude, safety_radius)
     
-    # 清理路径
-    path = clean_path(path)
-    
-    return path
+    return clean_path(path)
 
 
 # ==================== 障碍物管理 ====================
@@ -476,7 +473,7 @@ def save_obstacles(obstacles: List[Dict]) -> bool:
             'obstacles': obstacles,
             'count': len(obstacles),
             'save_time': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            'version': 'v17.0'
+            'version': 'v18.0'
         }
         with open(config.CONFIG_FILE, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
@@ -735,14 +732,15 @@ def create_planning_map(center_gcj: List[float], points_gcj: Dict,
     )
     m.add_child(draw)
     
-    # 绘制障碍物
+    # 绘制障碍物和安全缓冲区
     for obs in obstacles_gcj:
         coords = obs.get('polygon', [])
         height = obs.get('height', 30)
         if coords and len(coords) >= 3:
-            # 障碍物颜色：高于飞行高度为深红色，否则为橙色
+            # 障碍物颜色
             color = "darkred" if height > flight_altitude else "orange"
             
+            # 绘制障碍物本体
             folium.Polygon(
                 [[c[1], c[0]] for c in coords], 
                 color=color, weight=3, fill=True, 
@@ -752,20 +750,26 @@ def create_planning_map(center_gcj: List[float], points_gcj: Dict,
             
             # 绘制安全缓冲区（仅对需要避让的障碍物）
             if height > flight_altitude:
-                bounds = get_polygon_bounds(coords)
-                if bounds:
-                    lng_offset, lat_offset = meters_to_deg(safety_radius, center_gcj[1])
+                buffer = get_buffer_boundary(obs, safety_radius)
+                if buffer:
                     buffer_coords = [
-                        [bounds['min_lng'] - lng_offset, bounds['min_lat'] - lat_offset],
-                        [bounds['max_lng'] + lng_offset, bounds['min_lat'] - lat_offset],
-                        [bounds['max_lng'] + lng_offset, bounds['max_lat'] + lat_offset],
-                        [bounds['min_lng'] - lng_offset, bounds['max_lat'] + lat_offset]
+                        [buffer['min_lng'], buffer['min_lat']],
+                        [buffer['max_lng'], buffer['min_lat']],
+                        [buffer['max_lng'], buffer['max_lat']],
+                        [buffer['min_lng'], buffer['max_lat']]
                     ]
                     folium.Polygon(
                         [[c[1], c[0]] for c in buffer_coords],
-                        color="yellow", weight=1, fill=True,
+                        color="yellow", weight=2, fill=True,
                         fill_color="yellow", fill_opacity=0.15,
                         popup=f"🛡️ 安全缓冲区 (±{safety_radius}m)"
+                    ).add_to(m)
+                    
+                    # 绘制缓冲区边界线
+                    folium.PolyLine(
+                        [[c[1], c[0]] for c in buffer_coords + [buffer_coords[0]]],
+                        color="yellow", weight=1.5, opacity=0.4,
+                        dash_array='5, 5'
                     ).add_to(m)
     
     # 绘制起点终点
@@ -791,17 +795,19 @@ def create_planning_map(center_gcj: List[float], points_gcj: Dict,
             line_color = "orange"
         else:
             line_color = "green"
+        
+        # 绘制路径线
         folium.PolyLine(
             path_locations, color=line_color, weight=5, 
             opacity=0.9, popup=f"✈️ {direction}"
         ).add_to(m)
         
-        # 标记航点
+        # 标记绕行航点
         for i, point in enumerate(planned_path[1:-1]):
             folium.CircleMarker(
-                [point[1], point[0]], radius=4, color=line_color, 
-                fill=True, fill_color="white", fill_opacity=0.8, 
-                popup=f"航点 {i+1}"
+                [point[1], point[0]], radius=5, color=line_color, 
+                fill=True, fill_color="white", fill_opacity=0.8,
+                popup=f"绕行点 {i+1}"
             ).add_to(m)
     
     # 绘制直线航线（虚线）
@@ -906,14 +912,13 @@ def render_sidebar() -> Tuple[str, str, int, float, bool]:
     safety_radius = st.sidebar.slider(
         "安全半径 (米)", min_value=1, max_value=30, 
         value=st.session_state.safety_radius, step=1,
-        help="设置无人机与障碍物之间的最小安全距离"
+        help="设置无人机与障碍物之间的最小安全距离，路径将紧贴安全缓冲区外侧"
     )
     
     st.sidebar.markdown("---")
     st.sidebar.subheader("💾 自动保存")
     auto_save = st.sidebar.checkbox("自动保存障碍物", value=st.session_state.auto_backup)
     
-    # 更新安全半径
     st.session_state.safety_radius = safety_radius
     
     return page, map_type, drone_speed, flight_alt, auto_save
@@ -934,9 +939,7 @@ def render_planning_page(map_type: str, drone_speed: int, flight_alt: float, aut
     else:
         st.success("✅ 直线航线畅通无阻（所有障碍物高度 ≤ 飞行高度）")
     
-    # 显示安全半径说明
-    st.info(f"🛡️ 当前安全半径: **{st.session_state.safety_radius}米** - 规划路径将自动与所有障碍物保持此距离以上")
-    
+    st.info(f"🛡️ 当前安全半径: **{st.session_state.safety_radius}米** - 绕行航线将紧贴黄色安全缓冲区外侧")
     st.info("📝 点击地图左上角📐图标 → 选择多边形 → 围绕建筑物绘制 → 双击完成 → 输入高度并保存")
     
     col1, col2 = st.columns([1, 1.5])
@@ -969,7 +972,6 @@ def render_planning_controls(flight_alt: float, drone_speed: int, auto_save: boo
     dist = math.sqrt((b[0] - a[0])**2 + (b[1] - a[1])**2) * 111000
     st.caption(f"📏 直线距离: {dist:.0f} 米")
     
-    # 显示路径长度对比
     if hasattr(st.session_state, 'last_path_lengths') and st.session_state.last_path_lengths:
         st.markdown("---")
         st.markdown("### 📊 路径长度对比")
@@ -981,6 +983,12 @@ def render_planning_controls(flight_alt: float, drone_speed: int, auto_save: boo
         if 'selected' in st.session_state.last_path_lengths:
             selected = st.session_state.last_path_lengths['selected']
             st.info(f"✨ 最佳航线选择了{'向左' if selected == 'left' else '向右'}绕行（路径更短）")
+    
+    if st.session_state.planned_path:
+        st.markdown("---")
+        st.markdown("### 🎯 绕行航点信息")
+        waypoint_count = len(st.session_state.planned_path) - 2
+        st.caption(f"📌 共生成 {waypoint_count} 个绕行航点（最多{config.MAX_WAYPOINTS}个）")
 
 
 def render_point_settings():
@@ -1106,7 +1114,6 @@ def render_path_strategy(flight_alt: float):
     
     col_dir1, col_dir2, col_dir3 = st.columns(3)
     
-    # 检查当前高度下直线是否可行
     can_direct = can_fly_direct(
         st.session_state.points_gcj['A'], st.session_state.points_gcj['B'],
         st.session_state.obstacles_gcj, flight_alt
@@ -1122,7 +1129,8 @@ def render_path_strategy(flight_alt: float):
                 st.session_state.safety_radius
             )
             path_length = calculate_path_length(st.session_state.planned_path) * 111000
-            st.success(f"已切换到最佳航线模式，路径长度: {path_length:.0f}米")
+            waypoint_count = len(st.session_state.planned_path) - 2
+            st.success(f"已切换到最佳航线模式，路径长度: {path_length:.0f}米，绕行点: {waypoint_count}个")
             st.rerun()
     
     with col_dir2:
@@ -1135,7 +1143,8 @@ def render_path_strategy(flight_alt: float):
                 st.session_state.safety_radius
             )
             path_length = calculate_path_length(st.session_state.planned_path) * 111000
-            st.success(f"已切换到向左绕行模式，路径长度: {path_length:.0f}米")
+            waypoint_count = len(st.session_state.planned_path) - 2
+            st.success(f"已切换到向左绕行模式，路径长度: {path_length:.0f}米，绕行点: {waypoint_count}个")
             st.rerun()
     
     with col_dir3:
@@ -1148,7 +1157,8 @@ def render_path_strategy(flight_alt: float):
                 st.session_state.safety_radius
             )
             path_length = calculate_path_length(st.session_state.planned_path) * 111000
-            st.success(f"已切换到向右绕行模式，路径长度: {path_length:.0f}米")
+            waypoint_count = len(st.session_state.planned_path) - 2
+            st.success(f"已切换到向右绕行模式，路径长度: {path_length:.0f}米，绕行点: {waypoint_count}个")
             st.rerun()
     
     st.info(f"📌 当前绕行策略: **{st.session_state.current_direction}**")
@@ -1163,12 +1173,11 @@ def render_path_strategy(flight_alt: float):
         ))
         st.info(f"💡 共有 {blocking_count} 个障碍物阻挡航线")
     
-    # 安全半径说明
     st.markdown("---")
     st.markdown("#### 🛡️ 安全距离说明")
     st.caption(f"当前安全半径: **{st.session_state.safety_radius}米**")
-    st.caption("路径规划时会自动确保航线与所有障碍物保持此距离以上")
-    st.caption("地图上黄色半透明区域为障碍物的安全缓冲区")
+    st.caption("✅ 绕行航线将紧贴黄色安全缓冲区外侧，确保与障碍物保持安全距离")
+    st.caption("✅ 支持多航点绕行（最多{config.MAX_WAYPOINTS}个），路径平滑无后退")
     
     if st.button("🔄 重新规划路径", use_container_width=True):
         st.session_state.planned_path = create_avoidance_path(
@@ -1229,8 +1238,8 @@ def render_planning_map_view(map_type: str, flight_alt: float, straight_blocked:
     """渲染规划地图视图"""
     st.subheader("🗺️ 规划地图")
     st.caption("🟢 绿色=最佳航线 | 🟣 紫色=向左绕行 | 🟠 橙色=向右绕行 | 🔵 蓝色圆圈=安全半径")
-    st.caption("💡 提示：在鼠标点击设置模式下，直接点击地图即可设置起点或终点")
-    st.caption("🎨 深红色=需避让障碍物 | 🟠 橙色=安全障碍物 | 🟡 黄色半透明=安全缓冲区")
+    st.caption("💡 绕行航线紧贴黄色安全缓冲区外侧，确保与障碍物保持安全距离")
+    st.caption("🎨 深红色=需避让障碍物 | 🟠 橙色=安全障碍物 | 🟡 黄色区域=安全缓冲区 | 白色圆点=绕行航点")
     
     flight_trail = [[hb.lng, hb.lat] for hb in st.session_state.heartbeat_sim.history[:20]]
     center = st.session_state.points_gcj['A'] or config.SCHOOL_CENTER_GCJ
@@ -1356,7 +1365,6 @@ def render_flight_monitoring_page(map_type: str, flight_alt: float, drone_speed:
     if st.session_state.heartbeat_sim.history:
         latest = st.session_state.heartbeat_sim.history[0]
         
-        # 计算当前航点信息
         current_waypoint = 0
         total_waypoints = 0
         if st.session_state.planned_path and len(st.session_state.planned_path) > 1:
@@ -1683,7 +1691,7 @@ def render_obstacle_management_page(flight_alt: float):
                 'obstacles': st.session_state.obstacles_gcj,
                 'count': len(st.session_state.obstacles_gcj),
                 'export_time': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                'version': 'v17.0'
+                'version': 'v18.0'
             }
             json_str = json.dumps(config_data, ensure_ascii=False, indent=2)
             st.download_button(
