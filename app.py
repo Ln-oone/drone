@@ -308,148 +308,67 @@ def restore_from_backup(backup_path: str) -> bool:
 
 
 # ==================== 绕行算法 ====================
-def get_blocking_obstacles(
-    start: List[float], end: List[float], 
-    obstacles_gcj: List[Dict], flight_altitude: float
-) -> List[Dict]:
-    """获取阻挡航线的障碍物"""
-    blocking = []
-    for obs in obstacles_gcj:
-        if obs.get('height', 30) > flight_altitude:
-            coords = obs.get('polygon', [])
-            if coords and line_intersects_polygon(start, end, coords):
-                blocking.append(obs)
-    return blocking
+def gen_bypass(A, B, obs, rad_m, h, side='left'):
+    avoid = [o for o in obs if should_avoid(o, h)]
+    if not avoid:
+        return [A, B]
+    mx, my = (A[0]+B[0])/2, (A[1]+B[1])/2
+    dx, dy = B[0]-A[0], B[1]-A[1]
+    L = math.hypot(dx, dy)
+    if L == 0:
+        return [A, B]
+    ux, uy = dx/L, dy/L
+    px, py = -uy, ux
+    if side == 'right':
+        px, py = uy, -ux
+    deg_m = 1/111000
+    for attempt in range(1, 31):
+        off_m = rad_m * 2 * attempt
+        off_deg = off_m * deg_m
+        wp = (mx + px*off_deg, my + py*off_deg)
+        if path_safe(A, wp, avoid, rad_m, h) and path_safe(wp, B, avoid, rad_m, h):
+            return [A, wp, B]
+    pts = [p for o in avoid for p in o.get('polygon', [])]
+    if pts:
+        cx = sum(p[0] for p in pts)/len(pts)
+        cy = sum(p[1] for p in pts)/len(pts)
+        far = max(pts, key=lambda p: dist((cx, cy), p))
+        dx, dy = far[0]-cx, far[1]-cy
+        L2 = math.hypot(dx, dy)
+        if L2 > 0:
+            dx, dy = dx/L2, dy/L2
+        else:
+            dx, dy = 1, 0
+        wp = (far[0] + dx*rad_m*15*deg_m, far[1] + dy*rad_m*15*deg_m)
+        return [A, wp, B]
+    return [A, B]
 
-
-def find_left_path(
-    start: List[float], end: List[float], 
-    obstacles_gcj: List[Dict], flight_altitude: float, 
-    safety_radius: float = 5
-) -> List[List[float]]:
-    """
-    向左绕行：从顶部绕过障碍物
-    第1段（起点→点1）：最长，垂直向上飞到很高处
-    第2段（点1→点2）：次长，水平向右飞过障碍物顶部
-    第3段（点2→终点）：最短，垂直向下到终点
-    """
-    blocking_obs = get_blocking_obstacles(start, end, obstacles_gcj, flight_altitude)
-    
-    if not blocking_obs:
-        return [start, end]
-    
-    # 计算所有阻挡障碍物的整体边界
-    max_lng = -float('inf')
-    max_lat = -float('inf')
-    min_lat = float('inf')
-    
-    for obs in blocking_obs:
-        coords = obs.get('polygon', [])
-        if coords:
-            for point in coords:
-                max_lng = max(max_lng, point[0])
-                max_lat = max(max_lat, point[1])
-                min_lat = min(min_lat, point[1])
-    
-    if max_lng == -float('inf'):
-        return [start, end]
-    
-    # 安全偏移距离（米转度）
-    safe_lng, safe_lat = meters_to_deg(safety_radius * 3)
-    
-    # 计算障碍物的高度
-    obstacle_height = max_lat - min_lat
-    
-    # 第1段：起点 → 点1（垂直向上，距离最长）
-    point1 = [
-        start[0] + 0.0012,
-        max_lat + obstacle_height * 3 + safe_lat * 5 + 0.0002
-    ]
-    
-    # 第2段：点1 → 点2（水平向右，距离次长）
-    point2 = [
-        max_lng + obstacle_height * 2 + safe_lng * 3,
-        point1[1]
-    ]
-    
-    # 第3段：点2 → 终点（垂直向下，距离最短）
-    point3 = end
-    
-    return [start, point1, point2, point3]
-
-
-def find_right_path(
-    start: List[float], end: List[float], 
-    obstacles_gcj: List[Dict], flight_altitude: float, 
-    safety_radius: float = 5
-) -> List[List[float]]:
-    """向右绕行路径规划"""
-    blocking_obs = get_blocking_obstacles(start, end, obstacles_gcj, flight_altitude)
-    
-    if not blocking_obs:
-        return [start, end]
-    
-    mid_x = (start[0] + end[0]) / 2
-    mid_y = (start[1] + end[1]) / 2
-    
-    dx = end[0] - start[0]
-    dy = end[1] - start[1]
-    length = math.sqrt(dx * dx + dy * dy)
-    
-    if length == 0:
-        return [start, end]
-    
-    perp_x = dy / length
-    perp_y = -dx / length
-    
-    offset_dist = safety_radius * config.WAYPOINT_OFFSET_FACTOR
-    lat_rad = math.radians(mid_y)
-    lng_scale = 111000 * math.cos(lat_rad)
-    lat_scale = 111000
-    
-    offset_x = perp_x * offset_dist / lng_scale
-    offset_y = perp_y * offset_dist / lat_scale
-    
-    waypoint = [mid_x + offset_x, mid_y + offset_y]
-    
-    return [start, waypoint, end]
-
-
-def calculate_path_length(path: List[List[float]]) -> float:
-    """计算路径总长度（度）"""
-    total = 0.0
-    for i in range(len(path) - 1):
-        total += distance(path[i], path[i + 1])
-    return total
-
-
-def find_best_path(
-    start: List[float], end: List[float], 
-    obstacles_gcj: List[Dict], flight_altitude: float, 
-    safety_radius: float = 5
-) -> List[List[float]]:
-    """选择最佳绕行路径"""
-    left_path = find_left_path(start, end, obstacles_gcj, flight_altitude, safety_radius)
-    right_path = find_right_path(start, end, obstacles_gcj, flight_altitude, safety_radius)
-    
-    left_len = calculate_path_length(left_path)
-    right_len = calculate_path_length(right_path)
-    
-    return left_path if left_len < right_len else right_path
-
-
-def create_avoidance_path(
-    start: List[float], end: List[float], 
-    obstacles_gcj: List[Dict], flight_altitude: float, 
-    direction: str, safety_radius: float = 5
-) -> List[List[float]]:
-    """创建避障路径"""
-    if direction == "向左绕行":
-        return find_left_path(start, end, obstacles_gcj, flight_altitude, safety_radius)
-    elif direction == "向右绕行":
-        return find_right_path(start, end, obstacles_gcj, flight_altitude, safety_radius)
+def plan_single_segment(A, B, obs, h, rad, strat):
+    avoid = [o for o in obs if should_avoid(o, h)]
+    straight = not any(line_cross_poly(A, B, o['polygon']) for o in avoid)
+    if straight:
+        return [A, B]
+    if strat in ('left', 'right'):
+        return gen_bypass(A, B, obs, rad, h, strat)
     else:
-        return find_best_path(start, end, obstacles_gcj, flight_altitude, safety_radius)
+        left = gen_bypass(A, B, obs, rad, h, 'left')
+        right = gen_bypass(A, B, obs, rad, h, 'right')
+        if left and right:
+            len_left = sum(dist(left[i], left[i+1]) for i in range(len(left)-1))
+            len_right = sum(dist(right[i], right[i+1]) for i in range(len(right)-1))
+            return left if len_left <= len_right else right
+        return left or right or [A, B]
+
+def plan_full_path(waypoints, obs, h, rad, strat):
+    full = []
+    for i in range(len(waypoints)-1):
+        seg = plan_single_segment(waypoints[i], waypoints[i+1], obs, h, rad, strat)
+        if i == 0:
+            full.extend(seg)
+        else:
+            full.extend(seg[1:])  # 避免重复点
+    return full
+
 
 
 # ==================== 心跳包模拟器 ====================
