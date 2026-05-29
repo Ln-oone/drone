@@ -445,6 +445,7 @@ def find_avoidance_path_robust(start: List[float], end: List[float],
     """
     鲁棒的绕行算法 - 确保路径完全不与障碍物相交
     side: "left" 或 "right"
+    绕行点数量: 3-8个
     """
     blocking_obs = get_blocking_obstacles(start, end, obstacles_gcj, flight_altitude)
     
@@ -480,106 +481,149 @@ def find_avoidance_path_robust(start: List[float], end: List[float],
         boundary = min_lng
     
     # 基础偏移距离 = 安全半径 + 额外裕量
-    base_offset_meters = safety_radius + 3.0
+    base_offset_meters = safety_radius + 5.0
     offset_meters = base_offset_meters
     
     # 收集所有可行的路径
     viable_paths = []
     
-    # 尝试不同的偏移距离
-    for attempt in range(1, 20):
-        offset_deg_lng = offset_meters * deg_per_meter_lng
-        
-        # 创建绕行点 - 使用多个点确保平滑绕行
-        waypoints = []
-        
-        # 根据起点和终点的位置关系确定绕行点的纬度
-        if start[1] < min_lat and end[1] > max_lat:
-            # 需要完整绕过障碍物
-            waypoint_lats = [
-                start[1],
-                start[1] + (min_lat - start[1]) * 0.3,
-                start[1] + (min_lat - start[1]) * 0.6,
-                min_lat - 0.00001,
-                (min_lat + max_lat) / 2,
-                max_lat + 0.00001,
-                end[1] - (end[1] - max_lat) * 0.6,
-                end[1] - (end[1] - max_lat) * 0.3,
-                end[1]
-            ]
-        elif start[1] < min_lat:
-            # 起点在下方，终点在障碍物范围内或下方
-            target_lat = min(end[1], min_lat - 0.00005)
-            waypoint_lats = [
-                start[1],
-                start[1] + (target_lat - start[1]) * 0.33,
-                start[1] + (target_lat - start[1]) * 0.67,
-                target_lat,
-                end[1]
-            ]
-        elif end[1] > max_lat:
-            # 终点在上方，起点在障碍物范围内或上方
-            target_lat = max(start[1], max_lat + 0.00005)
-            waypoint_lats = [
-                start[1],
-                target_lat,
-                end[1] - (end[1] - target_lat) * 0.67,
-                end[1] - (end[1] - target_lat) * 0.33,
-                end[1]
-            ]
-        else:
-            # 起点和终点都在障碍物范围内或同侧
-            if side == "right":
-                target_lat = max_lat + 0.0001
-            else:
-                target_lat = min_lat - 0.0001
-            waypoint_lats = [start[1], (start[1] + target_lat) / 2, target_lat, (target_lat + end[1]) / 2, end[1]]
-        
-        # 为每个纬度计算对应的绕行点
-        for lat in waypoint_lats:
-            # 在原始路径上找到对应t值
-            if dy != 0:
-                t = (lat - start[1]) / dy
-                t = max(0, min(1, t))
-            else:
-                t = 0.5
+    # 确定绕行点数量（3-8个）
+    num_waypoints_range = [3, 4, 5, 6, 7, 8]
+    
+    # 尝试不同的偏移距离和绕行点数量
+    for num_waypoints in num_waypoints_range:
+        for attempt in range(1, 15):
+            offset_deg_lng = offset_meters * deg_per_meter_lng
             
-            orig_x = start[0] + dx * t
-            waypoint = [orig_x + perp_x * offset_deg_lng, lat]
-            waypoints.append(waypoint)
-        
-        # 构建候选路径
-        candidate_path = [start] + waypoints + [end]
-        
-        # 检查路径是否安全
-        path_safe = True
-        for i in range(len(candidate_path) - 1):
-            if not is_path_safe_with_radius(candidate_path[i], candidate_path[i + 1], 
-                                            blocking_obs, flight_altitude, safety_radius):
-                path_safe = False
-                break
-        
-        if path_safe:
-            viable_paths.append((offset_meters, candidate_path))
-        
-        # 增加偏移距离
-        offset_meters = base_offset_meters + safety_radius * attempt * 0.5
+            # 创建绕行点 - 使用多个点确保平滑绕行
+            waypoints = []
+            
+            # 计算绕行点的分布参数
+            t_values = [i / (num_waypoints + 1) for i in range(1, num_waypoints + 1)]
+            
+            # 根据起点和终点的位置关系确定绕行策略
+            if start[1] < min_lat and end[1] > max_lat:
+                # 需要完整绕过障碍物 - 在障碍物上下方都添加绕行点
+                for t in t_values:
+                    # 计算原始路径上的点
+                    orig_x = start[0] + dx * t
+                    orig_y = start[1] + dy * t
+                    
+                    # 根据t值调整偏移量，使路径平滑
+                    # 在靠近障碍物处增加偏移，在远离处减少
+                    if t < 0.3:
+                        # 起点附近
+                        factor = 0.5 + t * 1.5
+                    elif t > 0.7:
+                        # 终点附近
+                        factor = 0.5 + (1 - t) * 1.5
+                    else:
+                        # 障碍物附近
+                        factor = 1.0 + math.sin(math.pi * (t - 0.5)) * 0.3
+                    
+                    waypoint = [orig_x + perp_x * offset_deg_lng * factor, orig_y]
+                    waypoints.append(waypoint)
+            elif start[1] < min_lat:
+                # 起点在下方，终点在障碍物范围内或下方
+                target_lat = min(end[1], min_lat - 0.00005)
+                for t in t_values:
+                    orig_x = start[0] + dx * t
+                    lat = start[1] + (target_lat - start[1]) * t
+                    # 在原始路径上找到对应x
+                    if dy != 0:
+                        t2 = (lat - start[1]) / dy
+                        t2 = max(0, min(1, t2))
+                        orig_x2 = start[0] + dx * t2
+                    else:
+                        orig_x2 = orig_x
+                    
+                    # 根据位置调整偏移因子
+                    if t < 0.5:
+                        factor = 0.6 + t * 0.8
+                    else:
+                        factor = 1.0 - (t - 0.5) * 0.4
+                    
+                    waypoint = [orig_x2 + perp_x * offset_deg_lng * factor, lat]
+                    waypoints.append(waypoint)
+            elif end[1] > max_lat:
+                # 终点在上方，起点在障碍物范围内或上方
+                target_lat = max(start[1], max_lat + 0.00005)
+                for t in t_values:
+                    orig_x = start[0] + dx * t
+                    lat = start[1] + (target_lat - start[1]) * t
+                    if dy != 0:
+                        t2 = (lat - start[1]) / dy
+                        t2 = max(0, min(1, t2))
+                        orig_x2 = start[0] + dx * t2
+                    else:
+                        orig_x2 = orig_x
+                    
+                    if t < 0.5:
+                        factor = 0.6 + t * 0.8
+                    else:
+                        factor = 1.0 - (t - 0.5) * 0.4
+                    
+                    waypoint = [orig_x2 + perp_x * offset_deg_lng * factor, lat]
+                    waypoints.append(waypoint)
+            else:
+                # 起点和终点都在障碍物范围内或同侧
+                # 需要绕到障碍物外侧
+                if side == "right":
+                    target_lat = max_lat + 0.0001
+                else:
+                    target_lat = min_lat - 0.0001
+                
+                for t in t_values:
+                    # 先向上/下移动到目标纬度
+                    lat = start[1] + (target_lat - start[1]) * t
+                    if dy != 0:
+                        t2 = (lat - start[1]) / dy
+                        t2 = max(0, min(1, t2))
+                        orig_x = start[0] + dx * t2
+                    else:
+                        orig_x = start[0] + dx * t
+                    
+                    # 根据位置调整偏移因子
+                    if t < 0.5:
+                        factor = 0.7 + t * 0.6
+                    else:
+                        factor = 1.0 - (t - 0.5) * 0.6
+                    
+                    waypoint = [orig_x + perp_x * offset_deg_lng * factor, lat]
+                    waypoints.append(waypoint)
+            
+            # 构建候选路径
+            candidate_path = [start] + waypoints + [end]
+            
+            # 检查路径是否安全
+            path_safe = True
+            for i in range(len(candidate_path) - 1):
+                if not is_path_safe_with_radius(candidate_path[i], candidate_path[i + 1], 
+                                                blocking_obs, flight_altitude, safety_radius):
+                    path_safe = False
+                    break
+            
+            if path_safe:
+                viable_paths.append((offset_meters, num_waypoints, candidate_path))
+            
+            # 增加偏移距离
+            offset_meters = base_offset_meters + safety_radius * attempt * 0.8
     
     # 如果有可行路径，选择偏移最小的（路径最短）
     if viable_paths:
-        viable_paths.sort(key=lambda x: x[0])
-        best_path = viable_paths[0][1]
+        viable_paths.sort(key=lambda x: (x[0], x[1]))  # 先按偏移，再按绕行点数量
+        best_path = viable_paths[0][2]
         return simplify_path(best_path, blocking_obs, flight_altitude, safety_radius)
     
     # 保底方案：创建极端绕行点，确保完全避开
     fallback_waypoints = []
-    extra_offset = safety_radius * 8
+    extra_offset = safety_radius * 10
     offset_deg_lng = extra_offset * deg_per_meter_lng
     
-    # 在障碍物边界外创建一个大的绕行路径
-    num_points = max(8, min(12, int(abs(end[1] - start[1]) / 0.00005) + 4))
-    for i in range(1, num_points):
-        t = i / num_points
+    # 使用5个绕行点作为保底
+    num_points = 5
+    for i in range(1, num_points + 1):
+        t = i / (num_points + 1)
         lat = start[1] + (end[1] - start[1]) * t
         
         # 使用平滑曲线
