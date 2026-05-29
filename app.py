@@ -1639,8 +1639,8 @@ def render_flight_monitoring_page(flight_alt: float, drone_speed: int):
         
         st.markdown("---")
         
-        # 布局：左侧地图 + 右侧飞行控制参数
-        st.markdown("### 🗺️ 实时位置追踪 & 🎮 飞行控制")
+        # 重新组织布局：实时位置追踪和飞行统计/导出功能并排
+        st.markdown("### 🗺️ 实时位置追踪 & 📊 飞行统计")
         
         col_left, col_right = st.columns([2, 1])
         
@@ -1648,85 +1648,45 @@ def render_flight_monitoring_page(flight_alt: float, drone_speed: int):
             display_monitor_map(flight_alt, latest)
         
         with col_right:
-            # 飞行控制参数卡片
-            st.markdown("#### 🎮 飞行控制")
+            # 飞行统计卡片
+            st.markdown("#### 📊 飞行统计")
             
-            # 当前飞行参数
-            st.markdown("**当前飞行参数**")
-            param_col1, param_col2 = st.columns(2)
-            with param_col1:
-                st.metric("当前飞行高度", f"{latest.altitude} m")
-                st.metric("速度系数", f"{drone_speed}%")
-            with param_col2:
-                st.metric("安全半径", f"{st.session_state.safety_radius} 米")
+            stats_col1, stats_col2 = st.columns(2)
+            with stats_col1:
+                # 计算飞行统计
+                history_df = st.session_state.heartbeat_sim.export_flight_data()
+                if not history_df.empty:
+                    max_speed = history_df['speed'].max() if 'speed' in history_df.columns else 0
+                    avg_speed = history_df['speed'].mean() if 'speed' in history_df.columns else 0
+                    max_alt = history_df['altitude'].max() if 'altitude' in history_df.columns else 0
+                    total_time = history_df['flight_time'].max() if 'flight_time' in history_df.columns else 0
+                    
+                    st.metric("🏁 最高速度", f"{max_speed:.1f} m/s")
+                    st.metric("⛰️ 最高高度", f"{max_alt:.0f} m")
+                else:
+                    st.metric("🏁 最高速度", "0.0 m/s")
+                    st.metric("⛰️ 最高高度", "0 m")
+            
+            with stats_col2:
+                if not history_df.empty:
+                    max_speed = history_df['speed'].max() if 'speed' in history_df.columns else 0
+                    avg_speed = history_df['speed'].mean() if 'speed' in history_df.columns else 0
+                    max_alt = history_df['altitude'].max() if 'altitude' in history_df.columns else 0
+                    total_time = history_df['flight_time'].max() if 'flight_time' in history_df.columns else 0
+                    
+                    st.metric("📈 平均速度", f"{avg_speed:.1f} m/s")
+                    st.metric("⏱️ 总飞行时间", f"{total_time:.1f} s")
+                else:
+                    st.metric("📈 平均速度", "0.0 m/s")
+                    st.metric("⏱️ 总飞行时间", "0.0 s")
             
             st.markdown("---")
             
-            # 路径信息
-            if st.session_state.planned_path:
-                waypoint_count = len(st.session_state.planned_path) - 2
-                st.metric("🎯 绕行点数量", waypoint_count)
-                total_dist = calculate_path_length(st.session_state.planned_path) * 111000
-                st.caption(f"📏 规划路径总长: {total_dist:.0f} 米")
+            # 导出和操作按钮
+            st.markdown("#### 🎮 操作面板")
             
-            st.markdown("---")
-            
-            # 当前坐标
-            st.markdown("**📍 当前坐标**")
-            st.write(f"🟢 A点: ({st.session_state.points_gcj['A'][0]:.6f}, {st.session_state.points_gcj['A'][1]:.6f})")
-            st.write(f"🔴 B点: ({st.session_state.points_gcj['B'][0]:.6f}, {st.session_state.points_gcj['B'][1]:.6f})")
-            
-            a, b = st.session_state.points_gcj['A'], st.session_state.points_gcj['B']
-            dist = math.sqrt((b[0] - a[0])**2 + (b[1] - a[1])**2) * 111000
-            st.caption(f"📏 直线距离: {dist:.0f} 米")
-            st.caption(f"🛡️ 当前安全半径: {st.session_state.safety_radius} 米")
-            
-            st.markdown("---")
-            
-            # 控制按钮
             col_btn1, col_btn2 = st.columns(2)
             with col_btn1:
-                if st.button("▶️ 开始飞行", use_container_width=True, type="primary"):
-                    if st.session_state.points_gcj['A'] and st.session_state.points_gcj['B']:
-                        path = st.session_state.planned_path or [st.session_state.points_gcj['A'], st.session_state.points_gcj['B']]
-                        
-                        comm = st.session_state.comm_sim
-                        
-                        total_dist_calc = calculate_path_length(path) * 111000
-                        comm.add_planning_record({"message": "开始航线规划", "details": f"算法: A* | 障碍物数量: {len(st.session_state.obstacles_gcj)}"})
-                        comm.add_planning_record({"message": "航线规划完成", "details": f"类型: horizontal | 航点数: {len(path)} | 路径长度: {total_dist_calc:.1f}m"})
-                        comm.add_planning_record({"message": "导航目标", "details": f"起点: {st.session_state.points_gcj['A']} | 终点: {st.session_state.points_gcj['B']} | 目标高度: {flight_alt}m"})
-                        
-                        comm.send_message("GCS", "OBC", "START_MISSION", f"起点: {st.session_state.points_gcj['A']}, 终点: {st.session_state.points_gcj['B']}")
-                        comm.send_message("OBC", "FCU", "UPLOAD_MISSION", f"航点数量: {len(path)}")
-                        
-                        st.session_state.heartbeat_sim.set_path(path, flight_alt, drone_speed, st.session_state.safety_radius)
-                        st.session_state.simulation_running = True
-                        st.session_state.flight_history = []
-                        waypoint_count = len(path) - 2
-                        
-                        comm.send_message("FCU", "OBC", "ACK", "Mode: AUTO")
-                        comm.send_message("OBC", "GCS", "ACK", "任务已开始")
-                        
-                        st.success(f"🚁 飞行已开始！{'路径中有' + str(waypoint_count) + '个绕行点' if waypoint_count > 0 else '直线飞行'}")
-                        st.rerun()
-                    else:
-                        st.error("请先设置起点和终点")
-            
-            with col_btn2:
-                if st.button("⏹️ 停止飞行", use_container_width=True):
-                    st.session_state.simulation_running = False
-                    st.session_state.heartbeat_sim.simulating = False
-                    st.session_state.comm_sim.send_message("GCS", "OBC", "STOP_MISSION", "用户停止飞行")
-                    st.info("飞行已停止")
-                    st.rerun()
-            
-            st.markdown("---")
-            
-            # 导出按钮
-            st.markdown("**📊 数据导出**")
-            col_exp1, col_exp2 = st.columns(2)
-            with col_exp1:
                 if st.button("📊 导出飞行数据", use_container_width=True):
                     df = st.session_state.heartbeat_sim.export_flight_data()
                     if not df.empty:
@@ -1734,7 +1694,8 @@ def render_flight_monitoring_page(flight_alt: float, drone_speed: int):
                         st.download_button(label="📥 下载CSV", data=csv, 
                                          file_name=f"flight_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
                                          mime="text/csv", use_container_width=True)
-            with col_exp2:
+            
+            with col_btn2:
                 if st.button("📊 导出航点数据", use_container_width=True):
                     if st.session_state.planned_path:
                         waypoint_data = []
@@ -1751,9 +1712,17 @@ def render_flight_monitoring_page(flight_alt: float, drone_speed: int):
                                          file_name=f"waypoints_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
                                          mime="text/csv", use_container_width=True)
             
-            col_refresh = st.columns(1)[0]
+            col_refresh, col_stop = st.columns(2)
             with col_refresh:
                 if st.button("🔄 刷新数据", use_container_width=True):
+                    st.rerun()
+            
+            with col_stop:
+                if st.button("⏹️ 停止飞行", use_container_width=True):
+                    st.session_state.simulation_running = False
+                    st.session_state.heartbeat_sim.simulating = False
+                    st.session_state.comm_sim.send_message("GCS", "OBC", "STOP_MISSION", "用户停止飞行")
+                    st.success("飞行已停止")
                     st.rerun()
         
         st.markdown("---")
@@ -1922,8 +1891,24 @@ def display_flight_history():
         
         st.dataframe(recent_df, use_container_width=True)
         
-        # 移除了底部重复的飞行统计
+        st.markdown("### 📊 飞行统计")
+        col_stat1, col_stat2, col_stat3, col_stat4 = st.columns(4)
         
+        with col_stat1:
+            max_speed = history_df['speed'].max() if 'speed' in history_df.columns else 0
+            st.metric("🏁 最高速度", f"{max_speed:.1f} m/s")
+        
+        with col_stat2:
+            avg_speed = history_df['speed'].mean() if 'speed' in history_df.columns else 0
+            st.metric("📈 平均速度", f"{avg_speed:.1f} m/s")
+        
+        with col_stat3:
+            max_alt = history_df['altitude'].max() if 'altitude' in history_df.columns else 0
+            st.metric("⛰️ 最高高度", f"{max_alt:.0f} m")
+        
+        with col_stat4:
+            total_time = history_df['flight_time'].max() if 'flight_time' in history_df.columns else 0
+            st.metric("⏱️ 总飞行时间", f"{total_time:.1f} s")
     else:
         st.info("暂无飞行数据")
 
