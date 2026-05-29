@@ -46,7 +46,7 @@ os.makedirs(config.BACKUP_DIR, exist_ok=True)
 class CommunicationLog:
     """通信日志条目"""
     timestamp: str
-    direction: str  # "GCS→OBC", "OBC→GCS", "FCU→OBC", "OBC→FCU"
+    direction: str  # "GCS→OBC", "OBC→GCS", "FCU→OBC", "OBC→FCU", "FCU→OBC→GCS"
     message: str
     details: str = ""
 
@@ -75,8 +75,8 @@ class CommunicationSimulator:
         self.total_packets_received = 0
         self.total_packets_lost = 0
         
-        # 当前任务信息
-        self.current_mission = None
+        # 航线规划记录
+        self.planning_records: List[Dict] = []
         
     def send_message(self, src: str, dst: str, message: str, details: str = "") -> bool:
         """发送消息"""
@@ -113,6 +113,14 @@ class CommunicationSimulator:
             self.logs.pop()
         
         return True
+    
+    def send_relayed_message(self, src: str, relay: str, dst: str, message: str, details: str = "") -> bool:
+        """发送中继消息 (如 FCU→OBC→GCS)"""
+        # 先发送到中继
+        if not self.send_message(src, relay, message, details):
+            return False
+        # 再从中继发送到目标
+        return self.send_message(relay, dst, message, details)
     
     def check_link_status(self, src: str, dst: str) -> bool:
         """检查链路状态"""
@@ -187,6 +195,23 @@ class CommunicationSimulator:
         self.total_packets_received = 0
         self.total_packets_lost = 0
         self.logs.clear()
+        self.planning_records.clear()
+    
+    def add_planning_record(self, record: Dict):
+        """添加航线规划记录"""
+        record["timestamp"] = datetime.now().strftime("%H:%M:%S")
+        self.planning_records.insert(0, record)
+        if len(self.planning_records) > 20:
+            self.planning_records.pop()
+    
+    def get_fcu_to_obc_logs(self) -> List[CommunicationLog]:
+        """获取 FCU → OBC 的日志"""
+        return [log for log in self.logs if log.direction == "FCU→OBC" or 
+                (log.direction == "OBC→GCS" and "WP_REACHED" in log.message)]
+    
+    def get_obc_to_gcs_logs(self) -> List[CommunicationLog]:
+        """获取 OBC → GCS 的日志（中继消息）"""
+        return [log for log in self.logs if log.direction == "OBC→GCS"]
 
 
 # ==================== 几何函数 ====================
@@ -472,10 +497,7 @@ def get_blocking_obstacles(
 def is_path_safe(p1: List[float], p2: List[float], 
                   obstacles: List[Dict], flight_altitude: float, 
                   safety_margin: float = 2.0) -> bool:
-    """
-    检查路径段是否安全（不与任何障碍物多边形相交，并保持安全距离）
-    safety_margin: 安全裕量（米）
-    """
+    """检查路径段是否安全"""
     for obs in obstacles:
         if obs.get('height', 30) > flight_altitude:
             poly = obs.get('polygon', [])
@@ -515,9 +537,7 @@ def find_right_avoidance_path_optimized(
     obstacles_gcj: List[Dict], flight_altitude: float, 
     safety_radius: float = 5
 ) -> List[List[float]]:
-    """
-    优化版向右绕行算法
-    """
+    """优化版向右绕行算法"""
     blocking_obs = get_blocking_obstacles(start, end, obstacles_gcj, flight_altitude)
     
     if not blocking_obs:
@@ -784,10 +804,8 @@ class HeartbeatSimulator:
         if not self.simulating or self.path_index >= len(self.path) - 1:
             if self.simulating:
                 self.simulating = False
-                # 发送任务完成消息
                 if comm_sim:
-                    comm_sim.send_message("FCU", "OBC", "MISSION_COMPLETE", "所有航点已完成")
-                    comm_sim.send_message("OBC", "GCS", "MISSION_COMPLETE", "任务完成")
+                    comm_sim.send_relayed_message("FCU", "OBC", "GCS", "MISSION_COMPLETE", "任务完成")
             return None
         
         current_time = time.time()
@@ -822,13 +840,13 @@ class HeartbeatSimulator:
             self.progress = min(1.0, completed_distance / self.total_distance)
         
         if self.distance_traveled >= segment_distance and self.distance_traveled > 0:
-            # 到达航点，发送消息
             if comm_sim and old_path_index < len(self.path) - 1:
                 waypoint_num = old_path_index + 1
+                total_waypoints = len(self.path) - 1
                 comm_sim.send_message("FCU", "OBC", f"WP_REACHED #{waypoint_num}", 
-                                      f"到达航点 {waypoint_num}/{len(self.path)-1}")
-                comm_sim.send_message("OBC", "GCS", f"WP_REACHED #{waypoint_num}", 
-                                      f"航点 {waypoint_num} 已到达")
+                                      f"到达航点 {waypoint_num}/{total_waypoints}")
+                comm_sim.send_relayed_message("FCU", "OBC", "GCS", f"WP_REACHED #{waypoint_num}", 
+                                              f"航点 {waypoint_num} 已到达")
             
             self.path_index += 1
             self.distance_traveled = 0
@@ -837,10 +855,8 @@ class HeartbeatSimulator:
                 self.current_waypoint_index = self.path_index
             else:
                 self.simulating = False
-                # 发送任务完成消息
                 if comm_sim:
-                    comm_sim.send_message("FCU", "OBC", "MISSION_COMPLETE", "所有航点已完成")
-                    comm_sim.send_message("OBC", "GCS", "MISSION_COMPLETE", "任务完成")
+                    comm_sim.send_relayed_message("FCU", "OBC", "GCS", "MISSION_COMPLETE", "所有航点已完成")
                 return self._generate_heartbeat(True)
         else:
             if segment_distance > 0:
@@ -856,8 +872,7 @@ class HeartbeatSimulator:
         if not safe:
             self.safety_violation = True
             if comm_sim:
-                comm_sim.send_message("FCU", "OBC", "SAFETY_VIOLATION", "进入安全半径危险区域")
-                comm_sim.send_message("OBC", "GCS", "SAFETY_VIOLATION", "警告：进入危险区域")
+                comm_sim.send_relayed_message("FCU", "OBC", "GCS", "SAFETY_VIOLATION", "警告：进入危险区域")
         
         return self._generate_heartbeat(False)
     
@@ -1058,8 +1073,7 @@ def init_session_state():
         'show_rename_dialog': False,
         'waiting_for_start_point': False,
         'waiting_for_end_point': False,
-        'temp_click_point': None,
-        'show_comm_logs': True
+        'temp_click_point': None
     }
     
     for key, value in defaults.items():
@@ -1154,7 +1168,6 @@ def render_communication_page():
     with col_topology2:
         st.markdown("### 🔗 链路状态")
         
-        # GCS ↔ OBC 链路
         gcs_obc_status = "🟢 已连接" if comm.check_link_status("GCS", "OBC") else "🔴 断开"
         st.markdown(f"**GCS ↔ OBC**")
         st.markdown(f"UDP:14550 | {gcs_obc_status}")
@@ -1162,7 +1175,6 @@ def render_communication_page():
         
         st.markdown("↓")
         
-        # OBC ↔ FCU 链路
         obc_fcu_status = "🟢 已连接" if comm.check_link_status("OBC", "FCU") else "🔴 断开"
         st.markdown(f"**OBC ↔ FCU**")
         st.markdown(f"MAVLink | {obc_fcu_status}")
@@ -1224,55 +1236,79 @@ def render_communication_page():
     
     st.markdown("---")
     
-    # 通信日志
+    # ==================== 通信日志（主目录） ====================
     st.subheader("📋 通信日志")
     
-    col_log1, col_log2 = st.columns([3, 1])
-    with col_log2:
-        show_logs = st.checkbox("显示日志", value=st.session_state.show_comm_logs)
-        st.session_state.show_comm_logs = show_logs
-        if st.button("🗑️ 清空日志", use_container_width=True):
-            comm.logs.clear()
-            st.rerun()
+    # 业务流程标签页
+    col_log_tabs = st.columns(2)
+    with col_log_tabs[0]:
+        show_gcs_obc_fcu = st.button("📤 GCS → OBC → FCU", use_container_width=True)
+    with col_log_tabs[1]:
+        show_fcu_obc_gcs = st.button("📥 FCU → OBC → GCS", use_container_width=True)
     
-    if show_logs and comm.logs:
-        # 创建日志表格
-        log_data = []
-        for log in comm.logs[:50]:  # 显示最近50条
-            # 根据方向设置颜色
-            if "GCS" in log.direction:
-                direction_color = "🔵"
-            elif "OBC" in log.direction:
-                direction_color = "🟢"
-            else:
-                direction_color = "🟠"
-            
-            log_data.append({
-                "时间": log.timestamp,
-                "方向": f"{direction_color} {log.direction}",
-                "消息": log.message,
-                "详情": log.details
-            })
-        
-        log_df = pd.DataFrame(log_data)
-        st.dataframe(log_df, use_container_width=True, height=400)
-    elif not comm.logs:
-        st.info("暂无通信日志")
-    
-    # 业务流程说明
     st.markdown("---")
-    st.subheader("🔄 业务流程")
     
-    col_flow1, col_flow2 = st.columns(2)
-    with col_flow1:
-        st.markdown("### GCS → OBC → FCU")
+    # 显示业务流程日志
+    if show_gcs_obc_fcu or (not show_fcu_obc_gcs and not show_gcs_obc_fcu):
+        st.markdown("### 📤 GCS → OBC → FCU")
         st.caption("航线规划指令下发流程")
-        st.info("1. GCS 发起航线规划请求\n2. OBC 执行避障算法\n3. OBC 生成航点\n4. OBC 上传航点到 FCU\n5. FCU 确认接收")
+        
+        # 显示航线规划记录
+        if comm.planning_records:
+            st.markdown("#### 航线规划记录")
+            for record in comm.planning_records[:10]:
+                st.text(f"[{record.get('timestamp', '')}] {record.get('message', '')}")
+                if record.get('details'):
+                    st.caption(f"   {record['details']}")
+        else:
+            st.info("暂无航线规划记录")
+        
+        # 显示 GCS → OBC 消息
+        gcs_to_obc_logs = [log for log in comm.logs if log.direction == "GCS→OBC"]
+        if gcs_to_obc_logs:
+            st.markdown("#### GCS → OBC 消息")
+            for log in gcs_to_obc_logs[:10]:
+                st.text(f"[{log.timestamp}] {log.message}")
+                if log.details:
+                    st.caption(f"   {log.details}")
+        
+        # 显示 OBC → FCU 消息
+        obc_to_fcu_logs = [log for log in comm.logs if log.direction == "OBC→FCU"]
+        if obc_to_fcu_logs:
+            st.markdown("#### OBC → FCU 消息")
+            for log in obc_to_fcu_logs[:10]:
+                st.text(f"[{log.timestamp}] {log.message}")
+                if log.details:
+                    st.caption(f"   {log.details}")
     
-    with col_flow2:
-        st.markdown("### FCU → OBC → GCS")
+    if show_fcu_obc_gcs:
+        st.markdown("### 📥 FCU → OBC → GCS")
         st.caption("飞行状态上报流程")
-        st.info("1. FCU 周期性发送心跳\n2. FCU 发送航点到达状态\n3. OBC 转发状态到 GCS\n4. GCS 更新显示\n5. 任务完成时发送完成消息")
+        
+        # 显示 FCU → OBC 消息
+        fcu_to_obc_logs = [log for log in comm.logs if log.direction == "FCU→OBC"]
+        if fcu_to_obc_logs:
+            st.markdown("#### FCU → OBC")
+            for log in fcu_to_obc_logs[:20]:
+                st.text(f"[{log.timestamp}] {log.message}")
+                if log.details:
+                    st.caption(f"   {log.details}")
+        
+        # 显示 OBC → GCS 消息（中继）
+        obc_to_gcs_logs = [log for log in comm.logs if log.direction == "OBC→GCS"]
+        if obc_to_gcs_logs:
+            st.markdown("#### OBC → GCS")
+            for log in obc_to_gcs_logs[:20]:
+                st.text(f"[{log.timestamp}] {log.message}")
+                if log.details:
+                    st.caption(f"   {log.details}")
+    
+    # 清空日志按钮
+    st.markdown("---")
+    if st.button("🗑️ 清空所有日志", use_container_width=True):
+        comm.logs.clear()
+        comm.planning_records.clear()
+        st.rerun()
 
 
 # ==================== 页面渲染函数 ====================
@@ -1526,8 +1562,25 @@ def render_flight_controls(flight_alt: float, drone_speed: int):
             if st.session_state.points_gcj['A'] and st.session_state.points_gcj['B']:
                 path = st.session_state.planned_path or [st.session_state.points_gcj['A'], st.session_state.points_gcj['B']]
                 
-                # 发送航线规划消息
                 comm = st.session_state.comm_sim
+                
+                # 添加航线规划记录
+                comm.add_planning_record({
+                    "message": "开始航线规划",
+                    "details": f"算法: A* | 障碍物数量: {len(st.session_state.obstacles_gcj)}"
+                })
+                
+                comm.add_planning_record({
+                    "message": f"航线规划完成",
+                    "details": f"类型: horizontal | 航点数: {len(path)} | 路径长度: {total_dist:.1f}m"
+                })
+                
+                comm.add_planning_record({
+                    "message": "导航目标",
+                    "details": f"起点: {st.session_state.points_gcj['A']} | 终点: {st.session_state.points_gcj['B']} | 目标高度: {flight_alt}m"
+                })
+                
+                # 发送消息
                 comm.send_message("GCS", "OBC", "START_MISSION", 
                                   f"起点: {st.session_state.points_gcj['A']}, 终点: {st.session_state.points_gcj['B']}")
                 comm.send_message("OBC", "FCU", "UPLOAD_MISSION", f"航点数量: {len(path)}")
@@ -1539,7 +1592,6 @@ def render_flight_controls(flight_alt: float, drone_speed: int):
                 st.session_state.flight_history = []
                 waypoint_count = len(path) - 2
                 
-                # 发送确认消息
                 comm.send_message("FCU", "OBC", "ACK", "Mode: AUTO")
                 comm.send_message("OBC", "GCS", "ACK", "任务已开始")
                 
@@ -1554,7 +1606,6 @@ def render_flight_controls(flight_alt: float, drone_speed: int):
         if st.button("⏹️ 停止飞行", use_container_width=True):
             st.session_state.simulation_running = False
             st.session_state.heartbeat_sim.simulating = False
-            # 发送停止消息
             st.session_state.comm_sim.send_message("GCS", "OBC", "STOP_MISSION", "用户停止飞行")
             st.info("飞行已停止")
 
