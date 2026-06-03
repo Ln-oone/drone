@@ -552,14 +552,7 @@ def find_optimal_avoidance_path(start: List[float], end: List[float],
             waypoint = [orig_x + perp_x * offset_deg_lng, lat]
             waypoints.append(waypoint)
 
-        if start[1] < min_lat and end[1] > max_lat:
-            candidate_path = [start] + waypoints + [end]
-        elif start[1] < min_lat:
-            candidate_path = [start] + waypoints + [end]
-        elif end[1] > max_lat:
-            candidate_path = [start] + waypoints + [end]
-        else:
-            candidate_path = [start] + waypoints + [end]
+        candidate_path = [start] + waypoints + [end]
 
         path_safe = True
         for i in range(len(candidate_path) - 1):
@@ -1004,7 +997,6 @@ def render_coordinate_conversion_page():
                         results = CoordinateConverter.convert_batch(coords, "gcj02_to_wgs84")
                         direction_name = "GCJ-02 → WGS-84"
                     
-                    # 保存结果到session state
                     st.session_state.batch_results = {
                         "input": coords,
                         "output": results,
@@ -1017,7 +1009,6 @@ def render_coordinate_conversion_page():
             res = st.session_state.batch_results
             st.info(f"**{res['direction']}** - 共 {len(res['input'])} 个点")
             
-            # 创建结果表格
             result_data = []
             for i, (in_coord, out_coord) in enumerate(zip(res['input'], res['output'])):
                 delta_lng = out_coord[0] - in_coord[0]
@@ -1035,7 +1026,6 @@ def render_coordinate_conversion_page():
             df = pd.DataFrame(result_data)
             st.dataframe(df, use_container_width=True)
             
-            # 导出按钮
             csv = df.to_csv(index=False, encoding='utf-8-sig')
             st.download_button(
                 label="📥 导出转换结果 (CSV)",
@@ -1093,15 +1083,12 @@ def render_coordinate_conversion_page():
         res = st.session_state.conv_result
         preview_map = folium.Map(location=[res['input'][1], res['input'][0]], zoom_start=15, tiles=config.GAODE_SATELLITE_URL, attr="高德卫星地图")
         
-        # 标记输入点（红色）
         folium.Marker([res['input'][1], res['input'][0]], popup=f"输入点\n({res['input'][0]:.6f}, {res['input'][1]:.6f})",
                      icon=folium.Icon(color='red', icon='info-sign')).add_to(preview_map)
         
-        # 标记输出点（绿色）
         folium.Marker([res['output'][1], res['output'][0]], popup=f"转换后\n({res['output'][0]:.6f}, {res['output'][1]:.6f})",
                      icon=folium.Icon(color='green', icon='ok-sign')).add_to(preview_map)
         
-        # 连接线
         folium.PolyLine([[res['input'][1], res['input'][0]], [res['output'][1], res['output'][0]]],
                        color="blue", weight=2, opacity=0.7, popup=f"偏移: {math.hypot(res['delta'][0]*111000*math.cos(math.radians(res['input'][1])), res['delta'][1]*111000):.2f}米").add_to(preview_map)
         
@@ -1178,6 +1165,140 @@ def render_sidebar() -> Tuple[str, int, float, bool]:
     st.sidebar.subheader("💾 自动保存")
     auto_save = st.sidebar.checkbox("自动保存障碍物", value=st.session_state.auto_backup)
     return page, drone_speed, flight_alt, auto_save
+
+
+# ==================== 通信拓扑页面 ====================
+def render_communication_page():
+    st.header("🔗 通信链路拓扑与数据流")
+    comm = st.session_state.comm_sim
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        gcs_status = "🟢 在线" if comm.gcs_online else "🔴 离线"
+        st.metric("📡 GCS", gcs_status)
+        st.caption(f"IP: {comm.gcs_ip}")
+    with col2:
+        obc_status = "🟢 在线" if comm.obc_online else "🔴 离线"
+        st.metric("💻 OBC", obc_status)
+        st.caption(f"IP: {comm.obc_ip} | Raspberry Pi 4")
+    with col3:
+        fcu_status = "🟢 在线" if comm.fcu_online else "🔴 离线"
+        st.metric("🎮 FCU", fcu_status)
+        st.caption(f"IP: {comm.fcu_ip} | PX4 / ArduPilot")
+
+    st.markdown("---")
+    st.subheader("📡 通信链路拓扑")
+
+    col_t1, col_t2, col_t3 = st.columns([1, 2, 1])
+    with col_t1:
+        st.markdown("### 🖥️ GCS")
+        st.markdown("**地面站**")
+        st.caption(comm.gcs_ip)
+    with col_t2:
+        st.markdown("### 🔗 链路状态")
+        gcs_obc_status = "🟢 已连接" if comm.check_link_status("GCS", "OBC") else "🔴 断开"
+        st.markdown(f"**GCS ↔ OBC**")
+        st.markdown(f"UDP:14550 | {gcs_obc_status}")
+        st.caption(f"延迟: {comm.gcs_obc_latency}ms")
+        st.markdown("↓")
+        obc_fcu_status = "🟢 已连接" if comm.check_link_status("OBC", "FCU") else "🔴 断开"
+        st.markdown(f"**OBC ↔ FCU**")
+        st.markdown(f"MAVLink | {obc_fcu_status}")
+        st.caption(f"延迟: {comm.obc_fcu_latency}ms")
+    with col_t3:
+        st.markdown("### 🎮 FCU")
+        st.markdown("**飞控**")
+        st.caption(comm.fcu_ip)
+        st.markdown("PX4 / ArduPilot")
+
+    st.markdown("---")
+    st.subheader("📊 链路统计")
+    stats = comm.get_statistics()
+    col_s1, col_s2, col_s3, col_s4 = st.columns(4)
+    with col_s1:
+        st.metric("📤 发送包数", stats["sent"])
+    with col_s2:
+        st.metric("📥 接收包数", stats["received"])
+    with col_s3:
+        st.metric("❌ 丢包数", stats["lost"])
+    with col_s4:
+        st.metric("✅ 成功率", f"{stats['success_rate']:.1f}%")
+    col_s5, col_s6, col_s7 = st.columns(3)
+    with col_s5:
+        st.metric("⚡ GCS-OBC延迟", f"{stats['gcs_obc_latency']}ms")
+    with col_s6:
+        st.metric("⚡ OBC-FCU延迟", f"{stats['obc_fcu_latency']}ms")
+    with col_s7:
+        st.metric("📉 丢包率", f"{stats['packet_loss_rate']*100:.1f}%")
+
+    st.markdown("---")
+    st.subheader("🎮 链路控制")
+    col_c1, col_c2, col_c3, col_c4 = st.columns(4)
+    with col_c1:
+        if st.button("🔄 重置统计", use_container_width=True):
+            comm.reset_statistics()
+            st.success("统计已重置")
+            st.rerun()
+    with col_c2:
+        new_gcs_latency = st.slider("GCS-OBC延迟(ms)", 5, 100, comm.gcs_obc_latency, 5)
+        if new_gcs_latency != comm.gcs_obc_latency:
+            comm.gcs_obc_latency = new_gcs_latency
+    with col_c3:
+        new_obc_latency = st.slider("OBC-FCU延迟(ms)", 5, 100, comm.obc_fcu_latency, 5)
+        if new_obc_latency != comm.obc_fcu_latency:
+            comm.obc_fcu_latency = new_obc_latency
+    with col_c4:
+        new_loss_rate = st.slider("丢包率(%)", 0.0, 5.0, comm.packet_loss_rate*100, 0.1) / 100
+        if new_loss_rate != comm.packet_loss_rate:
+            comm.packet_loss_rate = new_loss_rate
+
+    st.markdown("---")
+    st.subheader("📋 通信日志")
+    show1 = st.button("📤 GCS → OBC → FCU", use_container_width=True, type="primary")
+    show2 = st.button("📥 FCU → OBC → GCS", use_container_width=True, type="secondary")
+    st.markdown("---")
+
+    if show1 or (not show2 and not show1):
+        st.markdown("### 📤 GCS → OBC → FCU")
+        st.caption("航线规划指令下发流程")
+        if comm.planning_records:
+            st.markdown("#### 航线规划记录")
+            for record in comm.planning_records[:10]:
+                st.text(f"[{record.get('timestamp', '')}] {record.get('message', '')}")
+                if record.get('details'):
+                    st.caption(f"   {record['details']}")
+        else:
+            st.info("暂无航线规划记录")
+        gcs_logs = [log for log in comm.logs if log.direction == "GCS→OBC"]
+        if gcs_logs:
+            st.markdown("#### GCS → OBC")
+            for log in gcs_logs[:10]:
+                st.text(f"[{log.timestamp}] {log.message}")
+        obc_logs = [log for log in comm.logs if log.direction == "OBC→FCU"]
+        if obc_logs:
+            st.markdown("#### OBC → FCU")
+            for log in obc_logs[:10]:
+                st.text(f"[{log.timestamp}] {log.message}")
+
+    if show2:
+        st.markdown("### 📥 FCU → OBC → GCS")
+        st.caption("飞行状态上报流程")
+        fcu_logs = [log for log in comm.logs if log.direction == "FCU→OBC"]
+        if fcu_logs:
+            st.markdown("#### FCU → OBC")
+            for log in fcu_logs[:20]:
+                st.text(f"[{log.timestamp}] {log.message}")
+        obc_logs = [log for log in comm.logs if log.direction == "OBC→GCS"]
+        if obc_logs:
+            st.markdown("#### OBC → GCS")
+            for log in obc_logs[:20]:
+                st.text(f"[{log.timestamp}] {log.message}")
+
+    st.markdown("---")
+    if st.button("🗑️ 清空所有日志", use_container_width=True):
+        comm.logs.clear()
+        comm.planning_records.clear()
+        st.rerun()
 
 
 # ==================== 页面渲染函数 ====================
@@ -1908,7 +2029,7 @@ def render_obstacle_management_page(flight_alt: float):
             else:
                 st.warning("⚠️ 请先选择要删除的障碍物")
     with col_b3:
-        batch_height = st.number_input("批量高度(m)", 1, 200, 30, 5, key="batch_height")
+        batch_height = st.number_input("批量高度(m)", min_value=1, max_value=200, value=30, step=5, key="batch_height")
         if st.button("📏 批量设置高度", use_container_width=True):
             selected = [i for i, obs in enumerate(st.session_state.obstacles_gcj) if obs.get('selected', False)]
             if selected:
@@ -1934,7 +2055,7 @@ def render_obstacle_management_page(flight_alt: float):
             c_n1, c_n2 = st.columns(2)
             with c_n1:
                 name_prefix = st.text_input("名称前缀", value="建筑物")
-                start_number = st.number_input("起始编号", 1, 1, 1)
+                start_number = st.number_input("起始编号", min_value=1, value=1, step=1)
             with c_n2:
                 name_suffix = st.text_input("名称后缀", value="")
             col_confirm, col_cancel = st.columns(2)
@@ -1995,7 +2116,8 @@ def render_obstacle_card(idx: int, flight_alt: float, container):
                 st.caption(f"📏 高度: {height}m")
             with c_h2:
                 st.caption(f"📍 顶点: {len(obs.get('polygon', []))}个")
-            new_h = st.number_input("调整高度", value=height, 1, 200, 5, key=f"quick_edit_{idx}", label_visibility="collapsed")
+            # 修复：使用正确的参数顺序
+            new_h = st.number_input("调整高度", min_value=1, max_value=200, value=height, step=5, key=f"quick_edit_{idx}", label_visibility="collapsed")
             if new_h != height:
                 obs['height'] = new_h
                 if st.session_state.auto_backup:
