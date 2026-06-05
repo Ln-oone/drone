@@ -1804,18 +1804,25 @@ def render_obstacle_management_page(flight_alt: float):
             if save_obstacles(st.session_state.obstacles_gcj):
                 st.success(f"✅ 已保存 {len(st.session_state.obstacles_gcj)} 个障碍物")
                 st.balloons()
-                time.sleep(0.5)
-                st.rerun()
+                # 移除 time.sleep 和 st.rerun()，让用户看到成功提示
     with cols[1]:
         if st.button("📂 加载配置", use_container_width=True):
             loaded = load_obstacles()
-            if loaded:
+            if loaded is not None and len(loaded) > 0:
                 st.session_state.obstacles_gcj = loaded
+                # 重置所有选中状态
+                for obs in st.session_state.obstacles_gcj:
+                    obs['selected'] = False
                 update_path_after_obstacle_change(flight_alt)
                 st.success(f"✅ 已加载 {len(loaded)} 个障碍物")
                 st.rerun()
+            elif loaded is not None and len(loaded) == 0:
+                st.session_state.obstacles_gcj = []
+                update_path_after_obstacle_change(flight_alt)
+                st.info("📭 配置文件中没有障碍物数据")
+                st.rerun()
             else:
-                st.warning("⚠️ 未找到配置文件")
+                st.warning("⚠️ 未找到配置文件或配置文件损坏")
     with cols[2]:
         if st.session_state.obstacles_gcj:
             config_data = {'obstacles': st.session_state.obstacles_gcj, 'count': len(st.session_state.obstacles_gcj),
@@ -1825,12 +1832,17 @@ def render_obstacle_management_page(flight_alt: float):
                                mime="application/json", use_container_width=True)
         else:
             st.button("📥 导出配置", use_container_width=True, disabled=True)
+            st.caption("📭 暂无障碍物可导出")
     with cols[3]:
         latest_backup = get_latest_backup()
         if latest_backup:
             if st.button("🔄 恢复备份", use_container_width=True):
                 if restore_from_backup(latest_backup):
+                    # 重新加载障碍物
                     st.session_state.obstacles_gcj = load_obstacles()
+                    # 重置选中状态
+                    for obs in st.session_state.obstacles_gcj:
+                        obs['selected'] = False
                     update_path_after_obstacle_change(flight_alt)
                     st.success("✅ 已从备份恢复")
                     st.rerun()
@@ -1838,15 +1850,21 @@ def render_obstacle_management_page(flight_alt: float):
                     st.error("❌ 恢复失败")
         else:
             st.button("🔄 恢复备份", use_container_width=True, disabled=True)
+            st.caption("📭 暂无可用备份")
     with cols[4]:
         if st.button("🗑️ 清除全部", use_container_width=True):
-            if st.session_state.auto_backup:
-                backup_config()
-            st.session_state.obstacles_gcj = []
-            save_obstacles([])
-            update_path_after_obstacle_change(flight_alt)
-            st.success("✅ 已清除所有障碍物")
-            st.rerun()
+            # 添加确认对话框
+            if st.session_state.obstacles_gcj:
+                # 自动备份当前数据
+                if st.session_state.auto_backup:
+                    backup_config()
+                st.session_state.obstacles_gcj = []
+                save_obstacles([])
+                update_path_after_obstacle_change(flight_alt)
+                st.success("✅ 已清除所有障碍物")
+                st.rerun()
+            else:
+                st.warning("⚠️ 当前没有障碍物可清除")
 
     st.markdown("---")
     high_obs = sum(1 for obs in st.session_state.obstacles_gcj if obs.get('height', 30) > flight_alt)
@@ -1877,10 +1895,13 @@ def render_obstacle_management_page(flight_alt: float):
         if st.button("🗑️ 批量删除", use_container_width=True, type="primary"):
             selected = [i for i, obs in enumerate(st.session_state.obstacles_gcj) if obs.get('selected', False)]
             if selected:
+                # 批量删除前自动备份
+                if st.session_state.auto_backup:
+                    backup_config()
                 for i in reversed(selected):
                     st.session_state.obstacles_gcj.pop(i)
-                if st.session_state.auto_backup:
-                    save_obstacles(st.session_state.obstacles_gcj)
+                # 删除后自动保存
+                save_obstacles(st.session_state.obstacles_gcj)
                 update_path_after_obstacle_change(flight_alt)
                 st.success(f"✅ 已删除 {len(selected)} 个障碍物")
                 st.rerun()
@@ -1939,6 +1960,7 @@ def render_obstacle_management_page(flight_alt: float):
     with tab2:
         render_obstacle_map_view(flight_alt)
 
+
 def render_obstacle_list_view(flight_alt: float):
     st.subheader("📝 障碍物列表")
     st.caption("💡 提示：勾选复选框后可使用批量操作功能")
@@ -1953,6 +1975,7 @@ def render_obstacle_list_view(flight_alt: float):
                     render_obstacle_card(idx, flight_alt, cols[col_idx])
     else:
         st.info("📭 暂无任何障碍物，可以在「地图视图」中绘制添加")
+
 
 def render_obstacle_card(idx: int, flight_alt: float, container):
     obs = st.session_state.obstacles_gcj[idx]
@@ -1981,11 +2004,16 @@ def render_obstacle_card(idx: int, flight_alt: float, container):
                 update_path_after_obstacle_change(flight_alt)
                 st.rerun()
             if st.button("🗑️ 删除", key=f"delete_card_{idx}", use_container_width=True):
-                st.session_state.obstacles_gcj.pop(idx)
+                # 删除前自动备份
                 if st.session_state.auto_backup:
-                    save_obstacles(st.session_state.obstacles_gcj)
+                    backup_config()
+                st.session_state.obstacles_gcj.pop(idx)
+                # 删除后自动保存
+                save_obstacles(st.session_state.obstacles_gcj)
                 update_path_after_obstacle_change(flight_alt)
+                st.success(f"✅ 已删除 {name}")
                 st.rerun()
+
 
 def render_obstacle_map_view(flight_alt: float):
     st.subheader("🗺️ 地图视图")
@@ -2037,12 +2065,13 @@ def render_obstacle_map_view(flight_alt: float):
     if st.session_state.pending_obstacle is not None:
         render_obstacle_dialog()
 
-def update_path_after_obstacle_change(flight_alt: float):
-    st.session_state.planned_path = create_avoidance_path(
-        st.session_state.points_gcj['A'], st.session_state.points_gcj['B'],
-        st.session_state.obstacles_gcj, flight_alt,
-        st.session_state.current_direction, st.session_state.safety_radius)
 
+def update_path_after_obstacle_change(flight_alt: float):
+    if st.session_state.points_gcj['A'] and st.session_state.points_gcj['B']:
+        st.session_state.planned_path = create_avoidance_path(
+            st.session_state.points_gcj['A'], st.session_state.points_gcj['B'],
+            st.session_state.obstacles_gcj, flight_alt,
+            st.session_state.current_direction, st.session_state.safety_radius)
 # ==================== 主程序 ====================
 def main():
     st.set_page_config(page_title="无人机地面站系统", layout="wide")
