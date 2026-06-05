@@ -406,7 +406,7 @@ def restore_from_backup(backup_path: str) -> bool:
         return False
 
 
-# ==================== 优化的绕行算法 - 取消对称，确保不与障碍物相交 ====================
+# ==================== 优化的绕行算法 - 不对称且不与障碍物相交 ====================
 def get_blocking_obstacles(start: List[float], end: List[float], obstacles_gcj: List[Dict], flight_altitude: float) -> List[Dict]:
     blocking = []
     for obs in obstacles_gcj:
@@ -456,7 +456,6 @@ def is_path_segment_clear(p1: List[float], p2: List[float], obstacles: List[Dict
         poly = obs.get('polygon', [])
         if not poly:
             continue
-        # 检查线段是否与多边形相交
         if line_intersects_polygon(p1, p2, poly):
             return False
         # 采样检查线段上的点
@@ -477,11 +476,12 @@ def is_path_segment_clear(p1: List[float], p2: List[float], obstacles: List[Dict
     return True
 
 
-def find_avoidance_path_asymmetric(start: List[float], end: List[float],
+def find_asymmetric_avoidance_path(start: List[float], end: List[float],
                                     obstacles_gcj: List[Dict], flight_altitude: float,
                                     safety_radius: float = 5, side: str = "right") -> List[List[float]]:
     """
-    非对称绕行算法 - 左右绕行使用不同的偏移策略，确保完全不与障碍物相交
+    不对称绕行算法 - 确保完全不与任何障碍物相交
+    绕行点数量5-8个，形成折线路径
     """
     blocking_obs = get_blocking_obstacles(start, end, obstacles_gcj, flight_altitude)
     if not blocking_obs:
@@ -501,38 +501,31 @@ def find_avoidance_path_asymmetric(start: List[float], end: List[float],
     if path_len < 1e-9:
         return [start, end]
     
-    # 左右绕行使用不同的偏移基数（非对称）
+    # 绕行边界和偏移方向
     if side == "right":
         boundary = max_lng
         offset_sign = 1
-        # 向右绕行：偏移基数较大
+        # 右侧绕行偏移量稍大（不对称）
         base_offset_meters = safety_radius + 2.5
-        # 向右绕行：绕行点偏向上方
-        lat_bias = 0.3
     else:
         boundary = min_lng
         offset_sign = -1
-        # 向左绕行：偏移基数较小
+        # 左侧绕行偏移量稍小（不对称）
         base_offset_meters = safety_radius + 1.5
-        # 向左绕行：绕行点偏向下方
-        lat_bias = -0.3
     
     # 绕行点数量（5-8个总航点，包含起点终点）
     total_waypoints = random.randint(5, 8)
     num_mid_waypoints = total_waypoints - 2
     
-    # 根据起点和终点的位置关系确定绕行点的纬度（非对称处理）
+    # 确定绕行点的纬度位置（不对称分布）
     if start[1] < min_lat and end[1] > max_lat:
         # 完整绕过障碍物
-        # 非对称：起点附近和终点附近使用不同的分布密度
         waypoint_lats = [
             start[1],
             start[1] + (min_lat - start[1]) * 0.3,
-            start[1] + (min_lat - start[1]) * 0.6,
-            min_lat - 0.00001 - lat_bias * 0.000005,
-            (min_lat + max_lat) / 2 + lat_bias * 0.00001,
-            max_lat + 0.00001 + lat_bias * 0.000005,
-            end[1] - (end[1] - max_lat) * 0.6,
+            min_lat - 0.00002,
+            (min_lat + max_lat) / 2,
+            max_lat + 0.00002,
             end[1] - (end[1] - max_lat) * 0.3,
             end[1]
         ]
@@ -541,9 +534,8 @@ def find_avoidance_path_asymmetric(start: List[float], end: List[float],
         target_lat = min(end[1], min_lat - 0.00003)
         waypoint_lats = [
             start[1],
-            start[1] + (target_lat - start[1]) * 0.25,
-            start[1] + (target_lat - start[1]) * 0.5,
-            start[1] + (target_lat - start[1]) * 0.75,
+            start[1] + (target_lat - start[1]) * 0.3,
+            start[1] + (target_lat - start[1]) * 0.6,
             target_lat,
             end[1]
         ]
@@ -553,22 +545,21 @@ def find_avoidance_path_asymmetric(start: List[float], end: List[float],
         waypoint_lats = [
             start[1],
             target_lat,
-            end[1] - (end[1] - target_lat) * 0.75,
-            end[1] - (end[1] - target_lat) * 0.5,
-            end[1] - (end[1] - target_lat) * 0.25,
+            end[1] - (end[1] - target_lat) * 0.4,
+            end[1] - (end[1] - target_lat) * 0.7,
             end[1]
         ]
     else:
-        # 同侧绕过 - 左右不对称处理
+        # 同侧绕过 - 绕行到障碍物上方或下方
         if side == "right":
-            target_lat = max_lat + 0.0001 + lat_bias * 0.00002
+            target_lat = max_lat + 0.0001
         else:
-            target_lat = min_lat - 0.0001 + lat_bias * 0.00002
+            target_lat = min_lat - 0.0001
         waypoint_lats = [
             start[1],
-            (start[1] + target_lat) * 0.6 + target_lat * 0.4,
+            (start[1] + target_lat) / 2,
             target_lat,
-            (target_lat + end[1]) * 0.4 + target_lat * 0.6,
+            (target_lat + end[1]) / 2,
             end[1]
         ]
     
@@ -586,7 +577,6 @@ def find_avoidance_path_asymmetric(start: List[float], end: List[float],
         # 构建绕行点
         waypoints = []
         for lat in waypoint_lats:
-            # 在原始路径上找到对应点
             if dy != 0:
                 t = (lat - start[1]) / dy
                 t = max(0, min(1, t))
@@ -617,7 +607,7 @@ def find_avoidance_path_asymmetric(start: List[float], end: List[float],
     
     # 保底方案：创建大绕行路径
     fallback_waypoints = []
-    offset_meters = base_offset_meters + safety_radius * 8
+    offset_meters = base_offset_meters + safety_radius * 6
     offset_deg_lng = offset_meters * deg_per_meter_lng
     
     # 创建更多绕行点确保安全
@@ -625,12 +615,7 @@ def find_avoidance_path_asymmetric(start: List[float], end: List[float],
     for i in range(num_fallback):
         t = (i + 1) / (num_fallback + 1)
         lat = start[1] + (end[1] - start[1]) * t
-        # 使用不同的弧度偏移，避免对称
-        if side == "right":
-            arc_factor = 0.5 + 0.3 * math.sin(math.pi * t)
-        else:
-            arc_factor = 0.5 - 0.2 * math.cos(math.pi * t)
-        waypoint_lng = boundary + offset_sign * offset_deg_lng * arc_factor
+        waypoint_lng = boundary + offset_sign * offset_deg_lng
         fallback_waypoints.append([waypoint_lng, lat])
     
     return [start] + fallback_waypoints + [end]
@@ -638,12 +623,12 @@ def find_avoidance_path_asymmetric(start: List[float], end: List[float],
 
 def find_left_avoidance_path_asymmetric(start: List[float], end: List[float], obstacles_gcj: List[Dict],
                                          flight_altitude: float, safety_radius: float = 5) -> List[List[float]]:
-    return find_avoidance_path_asymmetric(start, end, obstacles_gcj, flight_altitude, safety_radius, "left")
+    return find_asymmetric_avoidance_path(start, end, obstacles_gcj, flight_altitude, safety_radius, "left")
 
 
 def find_right_avoidance_path_asymmetric(start: List[float], end: List[float], obstacles_gcj: List[Dict],
                                           flight_altitude: float, safety_radius: float = 5) -> List[List[float]]:
-    return find_avoidance_path_asymmetric(start, end, obstacles_gcj, flight_altitude, safety_radius, "right")
+    return find_asymmetric_avoidance_path(start, end, obstacles_gcj, flight_altitude, safety_radius, "right")
 
 
 def find_best_avoidance_path_asymmetric(start: List[float], end: List[float], obstacles_gcj: List[Dict],
@@ -730,8 +715,7 @@ class HeartbeatSimulator:
         self.current_pos = path[0].copy()
         self.flight_altitude = altitude
         self.speed = speed
-        self.safety_radius = safety_radius
-        self.simulating = True
+        self.safety_radius = safety_radius        self.simulating = True
         self.progress = 0.0
         self.distance_traveled = 0.0
         self.safety_violation = False
