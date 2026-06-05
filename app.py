@@ -974,9 +974,11 @@ def create_planning_map(center_gcj: List[float], points_gcj: Dict, obstacles_gcj
                         straight_blocked: bool = True, flight_altitude: float = 50,
                         drone_pos: Optional[List] = None, direction: str = "最佳航线",
                         safety_radius: float = 5) -> folium.Map:
+    """创建规划地图 - 完整版"""
     tiles = config.GAODE_SATELLITE_URL
     m = folium.Map(location=[center_gcj[1], center_gcj[0]], zoom_start=16, tiles=tiles, attr="高德卫星地图")
 
+    # 添加绘图工具
     draw = plugins.Draw(
         export=True, position='topleft',
         draw_options={
@@ -988,65 +990,126 @@ def create_planning_map(center_gcj: List[float], points_gcj: Dict, obstacles_gcj
     )
     m.add_child(draw)
 
+    # ========== 1. 绘制障碍物 ==========
     for obs in obstacles_gcj:
         coords = obs.get('polygon', [])
         height = obs.get('height', 30)
         if coords and len(coords) >= 3:
+            # 红色：需要避让（高度>飞行高度），橙色：安全（高度<=飞行高度）
             color = "red" if height > flight_altitude else "orange"
-            folium.Polygon([[c[1], c[0]] for c in coords], color=color, weight=3, fill=True,
-                          fill_color=color, fill_opacity=0.4, popup=f"🚧 {obs.get('name')}\n高度: {height}m").add_to(m)
+            folium.Polygon(
+                [[c[1], c[0]] for c in coords], 
+                color=color, weight=3, fill=True,
+                fill_color=color, fill_opacity=0.4, 
+                popup=f"🚧 {obs.get('name')}\n高度: {height}m"
+            ).add_to(m)
 
+    # ========== 2. 绘制起点和终点 ==========
     if points_gcj.get('A'):
-        folium.Marker([points_gcj['A'][1], points_gcj['A'][0]], popup="🟢 起点",
-                     icon=folium.Icon(color="green", icon="play", prefix="fa")).add_to(m)
-        # 起点安全半径圆
+        # 起点标记
+        folium.Marker(
+            [points_gcj['A'][1], points_gcj['A'][0]], 
+            popup="🟢 起点",
+            icon=folium.Icon(color="green", icon="play", prefix="fa")
+        ).add_to(m)
+        # 起点安全半径圆（绿色半透明）
         folium.Circle(
             radius=safety_radius,
             location=[points_gcj['A'][1], points_gcj['A'][0]],
             color="green", weight=2, fill=True,
-            fill_color="green", fill_opacity=0.15,
+            fill_color="green", fill_opacity=0.2,
             popup=f"🛡️ 起点安全半径: {safety_radius}米"
         ).add_to(m)
     
     if points_gcj.get('B'):
-        folium.Marker([points_gcj['B'][1], points_gcj['B'][0]], popup="🔴 终点",
-                     icon=folium.Icon(color="red", icon="stop", prefix="fa")).add_to(m)
-        # 终点安全半径圆
+        # 终点标记
+        folium.Marker(
+            [points_gcj['B'][1], points_gcj['B'][0]], 
+            popup="🔴 终点",
+            icon=folium.Icon(color="red", icon="stop", prefix="fa")
+        ).add_to(m)
+        # 终点安全半径圆（红色半透明）
         folium.Circle(
             radius=safety_radius,
             location=[points_gcj['B'][1], points_gcj['B'][0]],
             color="red", weight=2, fill=True,
-            fill_color="red", fill_opacity=0.15,
+            fill_color="red", fill_opacity=0.2,
             popup=f"🛡️ 终点安全半径: {safety_radius}米"
         ).add_to(m)
 
+    # ========== 3. 绘制规划路径 ==========
     if planned_path and len(planned_path) > 1:
         path_locations = [[p[1], p[0]] for p in planned_path]
-        line_color = "purple" if "向左" in direction else "orange" if "向右" in direction else "green"
-        folium.PolyLine(path_locations, color=line_color, weight=5, opacity=0.9, popup=f"✈️ {direction}").add_to(m)
+        # 根据方向选择颜色
+        if "向左" in direction:
+            line_color = "purple"
+            color_name = "紫色"
+        elif "向右" in direction:
+            line_color = "orange"
+            color_name = "橙色"
+        else:
+            line_color = "green"
+            color_name = "绿色"
+        
+        # 绘制路径主线
+        folium.PolyLine(
+            path_locations, 
+            color=line_color, weight=5, opacity=0.9, 
+            popup=f"✈️ {direction} ({color_name})"
+        ).add_to(m)
+        
+        # 绘制航点标记（不包括起点终点）
         for i, point in enumerate(planned_path[1:-1]):
-            folium.CircleMarker([point[1], point[0]], radius=5, color=line_color, fill=True,
-                               fill_color="white", fill_opacity=0.8, popup=f"航点 {i+1}").add_to(m)
+            folium.CircleMarker(
+                [point[1], point[0]], 
+                radius=5, color=line_color, fill=True,
+                fill_color="white", fill_opacity=0.8, 
+                popup=f"航点 {i+1}"
+            ).add_to(m)
 
+    # ========== 4. 绘制直线航线（参考线） ==========
     if points_gcj.get('A') and points_gcj.get('B'):
         line = [[points_gcj['A'][1], points_gcj['A'][0]], [points_gcj['B'][1], points_gcj['B'][0]]]
         if straight_blocked:
-            folium.PolyLine(line, color="gray", weight=2, opacity=0.4, dash_array='5,5', popup="⚠️ 直线被阻挡").add_to(m)
+            # 直线被阻挡 - 灰色虚线
+            folium.PolyLine(
+                line, color="gray", weight=2, opacity=0.4, 
+                dash_array='5,5', popup="⚠️ 直线被阻挡"
+            ).add_to(m)
         else:
-            folium.PolyLine(line, color="blue", weight=2, opacity=0.5, dash_array='5,5', popup="直线航线").add_to(m)
+            # 直线畅通 - 蓝色虚线
+            folium.PolyLine(
+                line, color="blue", weight=2, opacity=0.5, 
+                dash_array='5,5', popup="直线航线"
+            ).add_to(m)
 
-    pos = drone_pos if drone_pos else points_gcj.get('A')
-    if pos:
-        folium.Circle(radius=safety_radius, location=[pos[1], pos[0]], color="blue", weight=2, fill=True,
-                     fill_color="blue", fill_opacity=0.2, popup=f"🛡️ 安全半径: {safety_radius}米").add_to(m)
+    # ========== 5. 绘制无人机当前位置的安全半径 ==========
+    if drone_pos:
+        folium.Circle(
+            radius=safety_radius, 
+            location=[drone_pos[1], drone_pos[0]], 
+            color="blue", weight=2, fill=True,
+            fill_color="blue", fill_opacity=0.25, 
+            popup=f"🛡️ 当前位置安全半径: {safety_radius}米"
+        ).add_to(m)
+        
+        # 无人机位置标记
+        folium.Marker(
+            [drone_pos[1], drone_pos[0]],
+            popup="🚁 无人机当前位置",
+            icon=folium.Icon(color="blue", icon="plane", prefix="fa")
+        ).add_to(m)
 
+    # ========== 6. 绘制历史飞行轨迹 ==========
     if flight_history and len(flight_history) > 1:
         trail = [[p[1], p[0]] for p in flight_history if len(p) >= 2]
         if len(trail) > 1:
-            folium.PolyLine(trail, color="orange", weight=2, opacity=0.6, popup="历史轨迹").add_to(m)
+            folium.PolyLine(
+                trail, color="orange", weight=2, opacity=0.6, 
+                popup="历史飞行轨迹"
+            ).add_to(m)
     
     return m
-
 # ==================== 辅助UI函数 ====================
 def init_session_state():
     defaults = {
