@@ -1031,309 +1031,278 @@ def render_sidebar() -> Tuple[str, int, float, bool]:
     return page, drone_speed, flight_alt, auto_save
 
 # ==================== 通信拓扑页面 ====================
-# ==================== 通信拓扑页面 ====================
 def render_communication_page():
     st.header("🔗 通信链路拓扑与数据流")
     comm = st.session_state.comm_sim
     
-    # 使用自定义CSS美化样式
-    st.markdown("""
-    <style>
-    .comm-card {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        border-radius: 15px;
-        padding: 20px;
-        color: white;
-        text-align: center;
-        margin: 10px 0;
-    }
-    .comm-card-green {
-        background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
-    }
-    .comm-card-red {
-        background: linear-gradient(135deg, #eb3349 0%, #f45c43 100%);
-    }
-    .link-status {
-        font-size: 14px;
-        font-family: monospace;
-        padding: 10px;
-        background: #f0f2f6;
-        border-radius: 10px;
-        margin: 5px 0;
-        text-align: center;
-    }
-    .log-item {
-        font-family: 'Courier New', monospace;
-        font-size: 12px;
-        padding: 5px;
-        border-bottom: 1px solid #e0e0e0;
-    }
-    .metric-card {
-        background: white;
-        border-radius: 10px;
-        padding: 15px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        text-align: center;
-        margin: 5px;
-    }
-    </style>
-    """, unsafe_allow_html=True)
-    
-    # 节点状态卡片（参考图片1）
-    st.markdown("### 📍 节点状态")
+    # 创建三列显示三个节点状态
     col1, col2, col3 = st.columns(3)
     
     with col1:
-        gcs_color = "comm-card-green" if comm.gcs_online else "comm-card-red"
-        st.markdown(f"""
-        <div class="{gcs_color}" style="background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);">
-            <h3>🖥️ GCS</h3>
-            <p>地面站</p>
-            <p style="font-size: 12px;">{comm.gcs_ip}</p>
-            <p style="font-size: 14px; font-weight: bold;">{'● 在线' if comm.gcs_online else '○ 离线'}</p>
+        st.markdown("""
+        <div style="background-color: #f0f2f6; border-radius: 10px; padding: 15px; text-align: center;">
+            <div style="font-size: 48px;">🖥️</div>
+            <div style="font-size: 20px; font-weight: bold;">GCS</div>
+            <div style="color: #00aa00;">● 在线</div>
+            <div style="font-size: 12px; color: #666;">地面站</div>
+            <div style="font-size: 11px; color: #999;">192.168.1.100</div>
         </div>
         """, unsafe_allow_html=True)
     
     with col2:
-        st.markdown(f"""
-        <div class="comm-card" style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);">
-            <h3>💻 OBC</h3>
-            <p>机载计算机</p>
-            <p style="font-size: 12px;">{comm.obc_ip}</p>
-            <p style="font-size: 14px; font-weight: bold;">Raspberry Pi 4</p>
+        st.markdown("""
+        <div style="background-color: #f0f2f6; border-radius: 10px; padding: 15px; text-align: center;">
+            <div style="font-size: 48px;">💻</div>
+            <div style="font-size: 20px; font-weight: bold;">OBC</div>
+            <div style="color: #00aa00;">● 在线</div>
+            <div style="font-size: 12px; color: #666;">机载计算机</div>
+            <div style="font-size: 11px; color: #999;">Raspberry Pi 4</div>
         </div>
         """, unsafe_allow_html=True)
     
     with col3:
-        st.markdown(f"""
-        <div class="comm-card" style="background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);">
-            <h3>🎮 FCU</h3>
-            <p>飞控</p>
-            <p style="font-size: 12px;">{comm.fcu_ip}</p>
-            <p style="font-size: 14px; font-weight: bold;">PX4 / ArduPilot</p>
+        st.markdown("""
+        <div style="background-color: #f0f2f6; border-radius: 10px; padding: 15px; text-align: center;">
+            <div style="font-size: 48px;">🎮</div>
+            <div style="font-size: 20px; font-weight: bold;">FCU</div>
+            <div style="color: #00aa00;">● 在线</div>
+            <div style="font-size: 12px; color: #666;">飞控</div>
+            <div style="font-size: 11px; color: #999;">PX4 / ArduPilot</div>
         </div>
         """, unsafe_allow_html=True)
     
     st.markdown("---")
     
-    # 链路拓扑（参考图片2）
+    # 链路拓扑图 - 使用列布局模拟网络拓扑
     st.subheader("📡 通信链路拓扑")
     
-    col_top1, col_top2, col_top3 = st.columns([1, 2, 1])
+    topo_col1, topo_col2, topo_col3 = st.columns([1, 2, 1])
     
-    with col_top1:
+    with topo_col1:
         st.markdown("""
-        <div style="text-align: center;">
-            <div style="font-size: 48px;">🖥️</div>
+        <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+                    border-radius: 12px; padding: 15px; text-align: center; color: white;">
+            <div style="font-size: 24px;">🖥️</div>
             <div style="font-weight: bold;">GCS</div>
-            <div style="font-size: 12px; color: gray;">地面站</div>
+            <div style="font-size: 11px;">地面站</div>
         </div>
         """, unsafe_allow_html=True)
     
-    with col_top2:
-        gcs_obc_status = "正常" if comm.check_link_status("GCS", "OBC") else "断开"
-        obc_fcu_status = "正常" if comm.check_link_status("OBC", "FCU") else "断开"
+    with topo_col2:
+        # 显示链路状态
+        gcs_obc_status = comm.check_link_status("GCS", "OBC")
+        obc_fcu_status = comm.check_link_status("OBC", "FCU")
         
         st.markdown(f"""
-        <div class="link-status">
-            <div><strong>GCS ↔ OBC</strong></div>
-            <div>UDP:14550 | <span style="color: {'green' if comm.check_link_status('GCS', 'OBC') else 'red'};">{'✓ 已连接' if comm.check_link_status('GCS', 'OBC') else '✗ 断开'}</span></div>
-            <div style="font-size: 11px;">延迟: {comm.gcs_obc_latency}ms</div>
-            <div style="margin: 10px 0;">⬇️</div>
-            <div><strong>OBC ↔ FCU</strong></div>
-            <div>MAVLink | <span style="color: {'green' if comm.check_link_status('OBC', 'FCU') else 'red'};">{'✓ 已连接' if comm.check_link_status('OBC', 'FCU') else '✗ 断开'}</span></div>
-            <div style="font-size: 11px;">延迟: {comm.obc_fcu_latency}ms</div>
+        <div style="text-align: center; padding: 10px;">
+            <div style="margin-bottom: 20px;">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <span style="font-weight: bold;">GCS</span>
+                    <span>⟷</span>
+                    <span style="font-weight: bold;">OBC</span>
+                </div>
+                <div style="font-size: 12px;">UDP:14550</div>
+                <div style="color: {'#00aa00' if gcs_obc_status else '#ff0000'}; font-size: 12px;">
+                    {'✅ 已连接' if gcs_obc_status else '❌ 断开'}
+                </div>
+                <div style="font-size: 11px; color: #666;">延迟: {comm.gcs_obc_latency}ms</div>
+            </div>
+            <div>⬇️</div>
+            <div style="margin-top: 20px;">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <span style="font-weight: bold;">OBC</span>
+                    <span>⟷</span>
+                    <span style="font-weight: bold;">FCU</span>
+                </div>
+                <div style="font-size: 12px;">MAVLink</div>
+                <div style="color: {'#00aa00' if obc_fcu_status else '#ff0000'}; font-size: 12px;">
+                    {'✅ 已连接' if obc_fcu_status else '❌ 断开'}
+                </div>
+                <div style="font-size: 11px; color: #666;">延迟: {comm.obc_fcu_latency}ms</div>
+            </div>
         </div>
         """, unsafe_allow_html=True)
     
-    with col_top3:
+    with topo_col3:
         st.markdown("""
-        <div style="text-align: center;">
-            <div style="font-size: 48px;">🎮</div>
+        <div style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); 
+                    border-radius: 12px; padding: 15px; text-align: center; color: white;">
+            <div style="font-size: 24px;">🎮</div>
             <div style="font-weight: bold;">FCU</div>
-            <div style="font-size: 12px; color: gray;">飞控</div>
+            <div style="font-size: 11px;">飞控</div>
         </div>
         """, unsafe_allow_html=True)
     
     st.markdown("---")
     
-    # 链路统计（参考图片3）
+    # 链路统计 - 使用卡片式布局
     st.subheader("📊 链路统计")
     stats = comm.get_statistics()
     
-    # 创建统计面板
-    col_stat1, col_stat2, col_stat3, col_stat4 = st.columns(4)
+    # 创建6列显示统计数据
+    stat_cols = st.columns(6)
+    stat_items = [
+        ("📤", "发送包数", stats["sent"]),
+        ("📥", "接收包数", stats["received"]),
+        ("❌", "丢包数", stats["lost"]),
+        ("✅", "成功率", f"{stats['success_rate']:.1f}%"),
+        ("⚡", "GCS-OBC延迟", f"{stats['gcs_obc_latency']}ms"),
+        ("⚡", "OBC-FCU延迟", f"{stats['obc_fcu_latency']}ms")
+    ]
     
-    with col_stat1:
-        st.metric("📤 发送数据包", stats["sent"])
-    with col_stat2:
-        st.metric("📥 接收数据包", stats["received"])
-    with col_stat3:
-        st.metric("❌ 丢失数据包", stats["lost"])
-    with col_stat4:
-        st.metric("✅ 成功率", f"{stats['success_rate']:.1f}%")
+    for idx, (icon, label, value) in enumerate(stat_items):
+        with stat_cols[idx]:
+            st.markdown(f"""
+            <div style="background-color: #f8f9fa; border-radius: 8px; padding: 10px; text-align: center;">
+                <div style="font-size: 24px;">{icon}</div>
+                <div style="font-size: 12px; color: #666;">{label}</div>
+                <div style="font-size: 16px; font-weight: bold;">{value}</div>
+            </div>
+            """, unsafe_allow_html=True)
     
-    # 第二行统计
-    col_stat5, col_stat6, col_stat7 = st.columns(3)
-    with col_stat5:
-        st.metric("⚡ GCS↔OBC 延迟", f"{stats['gcs_obc_latency']} ms")
-    with col_stat6:
-        st.metric("⚡ OBC↔FCU 延迟", f"{stats['obc_fcu_latency']} ms")
-    with col_stat7:
-        st.metric("📉 丢包率", f"{stats['packet_loss_rate']*100:.2f}%")
-    
-    # 链路状态摘要
-    col_status1, col_status2 = st.columns(2)
-    with col_status1:
-        gcs_obc_quality = "正常" if stats['success_rate'] > 95 else "异常"
-        st.info(f"🔗 GCS↔OBC: {gcs_obc_quality} | 延迟: {stats['gcs_obc_latency']}ms")
-    with col_status2:
-        obc_fcu_quality = "正常" if stats['success_rate'] > 95 else "异常"
-        st.info(f"🔗 OBC↔FCU: {obc_fcu_quality} | 延迟: {stats['obc_fcu_latency']}ms")
+    # 额外显示丢包率
+    st.markdown(f"""
+    <div style="background-color: #fff3cd; border-radius: 8px; padding: 8px; margin-top: 10px; text-align: center;">
+        <span style="font-weight: bold;">📉 丢包率: {stats['packet_loss_rate']*100:.1f}%</span>
+    </div>
+    """, unsafe_allow_html=True)
     
     st.markdown("---")
     
-    # 链路控制面板
+    # 链路控制 - 使用更紧凑的布局
     st.subheader("🎮 链路控制")
     
-    col_ctrl1, col_ctrl2, col_ctrl3, col_ctrl4 = st.columns(4)
+    control_col1, control_col2, control_col3 = st.columns(3)
     
-    with col_ctrl1:
+    with control_col1:
         if st.button("🔄 重置统计", use_container_width=True, type="primary"):
             comm.reset_statistics()
-            st.success("统计已重置")
+            st.success("✅ 统计已重置")
             st.rerun()
     
-    with col_ctrl2:
-        new_gcs_latency = st.slider("GCS↔OBC延迟(ms)", 5, 100, comm.gcs_obc_latency, 5, key="gcs_latency")
-        if new_gcs_latency != comm.gcs_obc_latency:
-            comm.gcs_obc_latency = new_gcs_latency
+    with control_col2:
+        col_a, col_b = st.columns(2)
+        with col_a:
+            new_gcs_latency = st.number_input("GCS-OBC延迟(ms)", 5, 100, comm.gcs_obc_latency, 5)
+            if new_gcs_latency != comm.gcs_obc_latency:
+                comm.gcs_obc_latency = new_gcs_latency
+        with col_b:
+            new_obc_latency = st.number_input("OBC-FCU延迟(ms)", 5, 100, comm.obc_fcu_latency, 5)
+            if new_obc_latency != comm.obc_fcu_latency:
+                comm.obc_fcu_latency = new_obc_latency
     
-    with col_ctrl3:
-        new_obc_latency = st.slider("OBC↔FCU延迟(ms)", 5, 100, comm.obc_fcu_latency, 5, key="obc_latency")
-        if new_obc_latency != comm.obc_fcu_latency:
-            comm.obc_fcu_latency = new_obc_latency
-    
-    with col_ctrl4:
-        new_loss_rate = st.slider("丢包率(%)", 0.0, 5.0, comm.packet_loss_rate * 100, 0.1, key="loss_rate") / 100
-        if new_loss_rate != comm.packet_loss_rate:
-            comm.packet_loss_rate = new_loss_rate
+    with control_col3:
+        new_loss_rate = st.slider("丢包率(%)", 0.0, 5.0, comm.packet_loss_rate * 100, 0.1)
+        if new_loss_rate != comm.packet_loss_rate * 100:
+            comm.packet_loss_rate = new_loss_rate / 100
     
     st.markdown("---")
     
-    # 业务流程选项卡（参考图片4）
-    st.subheader("📋 业务流程")
+    # 通信日志 - 使用表格形式显示
+    st.subheader("📋 通信日志")
     
-    tab1, tab2 = st.tabs(["📤 GCS → OBC → FCU", "📥 FCU → OBC → GCS"])
+    # 业务流程说明
+    st.markdown("""
+    <div style="background-color: #e7f3ff; border-left: 4px solid #2196F3; padding: 10px; margin-bottom: 15px;">
+        <strong>📌 业务流程</strong><br>
+        • GCS → OBC → FCU (航线规划指令下发)<br>
+        • FCU → OBC → GCS (飞行状态上报)
+    </div>
+    """, unsafe_allow_html=True)
     
-    with tab1:
+    # 创建选项卡选择显示哪种日志
+    log_tab1, log_tab2, log_tab3 = st.tabs(["📤 GCS→OBC→FCU", "📥 FCU→OBC→GCS", "📋 所有日志"])
+    
+    with log_tab1:
         st.caption("航线规划指令下发流程")
         
-        # 航线规划记录
+        # 显示规划记录
         if comm.planning_records:
             st.markdown("**✈️ 航线规划记录**")
-            for record in comm.planning_records[:10]:
+            for record in comm.planning_records[:5]:
                 with st.container():
                     col_time, col_msg = st.columns([1, 3])
                     with col_time:
-                        st.code(record.get('timestamp', ''), language="text")
+                        st.code(record.get('timestamp', ''), language=None)
                     with col_msg:
                         st.markdown(f"**{record.get('message', '')}**")
                         if record.get('details'):
                             st.caption(f"📝 {record['details']}")
-                    st.divider()
+                    st.markdown("---")
         else:
-            st.info("📭 暂无航线规划记录")
+            st.info("暂无航线规划记录")
         
-        # GCS → OBC 日志
-        gcs_logs = [log for log in comm.logs if log.direction == "GCS→OBC"]
-        if gcs_logs:
-            st.markdown("**🖥️ GCS → OBC**")
-            for log in gcs_logs[:10]:
+        # 显示GCS→OBC日志
+        gcs_to_obc = [log for log in comm.logs if log.direction == "GCS→OBC"]
+        if gcs_to_obc:
+            st.markdown("**📡 GCS → OBC**")
+            for log in gcs_to_obc[:10]:
                 st.text(f"[{log.timestamp}] {log.message}")
-                if log.details:
-                    st.caption(f"  └─ {log.details}")
         
-        # OBC → FCU 日志
-        obc_logs = [log for log in comm.logs if log.direction == "OBC→FCU"]
-        if obc_logs:
-            st.markdown("**💻 OBC → FCU**")
-            for log in obc_logs[:10]:
+        # 显示OBC→FCU日志
+        obc_to_fcu = [log for log in comm.logs if log.direction == "OBC→FCU"]
+        if obc_to_fcu:
+            st.markdown("**📡 OBC → FCU**")
+            for log in obc_to_fcu[:10]:
                 st.text(f"[{log.timestamp}] {log.message}")
-                if log.details:
-                    st.caption(f"  └─ {log.details}")
     
-    with tab2:
+    with log_tab2:
         st.caption("飞行状态上报流程")
         
-        # FCU → OBC 日志
-        fcu_logs = [log for log in comm.logs if log.direction == "FCU→OBC"]
-        if fcu_logs:
-            st.markdown("**🎮 FCU → OBC**")
-            for log in fcu_logs[:15]:
+        # 显示FCU→OBC日志
+        fcu_to_obc = [log for log in comm.logs if log.direction == "FCU→OBC"]
+        if fcu_to_obc:
+            st.markdown("**📡 FCU → OBC**")
+            for log in fcu_to_obc[:15]:
                 st.text(f"[{log.timestamp}] {log.message}")
-                if log.details:
-                    st.caption(f"  └─ {log.details}")
-        else:
-            st.info("📭 暂无FCU上报数据")
         
-        # OBC → GCS 日志
-        obc_logs = [log for log in comm.logs if log.direction == "OBC→GCS"]
-        if obc_logs:
-            st.markdown("**💻 OBC → GCS**")
-            for log in obc_logs[:15]:
+        # 显示OBC→GCS日志
+        obc_to_gcs = [log for log in comm.logs if log.direction == "OBC→GCS"]
+        if obc_to_gcs:
+            st.markdown("**📡 OBC → GCS**")
+            for log in obc_to_gcs[:15]:
                 st.text(f"[{log.timestamp}] {log.message}")
-                if log.details:
-                    st.caption(f"  └─ {log.details}")
-        else:
-            st.info("📭 暂无OBC上报数据")
     
-    st.markdown("---")
-    
-    # 日志管理
-    col_log1, col_log2 = st.columns(2)
-    with col_log1:
-        if st.button("📋 显示日志", use_container_width=True, type="primary"):
-            st.session_state.show_full_log = not st.session_state.get('show_full_log', False)
-    
-    with col_log2:
-        if st.button("🗑️ 清空日志", use_container_width=True):
-            comm.logs.clear()
-            comm.planning_records.clear()
-            st.success("日志已清空")
-            st.rerun()
-    
-    # 完整日志显示
-    if st.session_state.get('show_full_log', False):
-        st.markdown("---")
-        st.subheader("📜 完整通信日志")
-        
+    with log_tab3:
+        # 显示所有日志的表格形式
         if comm.logs:
-            # 创建表格显示日志
-            log_data = []
+            # 准备表格数据
+            table_data = []
             for i, log in enumerate(comm.logs[:50]):
-                log_data.append({
+                # 提取详细信息（如果有）
+                details = ""
+                # 检查是否在planning_records中有对应记录
+                for record in comm.planning_records:
+                    if record.get('timestamp', '') in log.timestamp:
+                        details = record.get('details', '')
+                        break
+                
+                table_data.append({
                     "序号": i + 1,
                     "时间": log.timestamp,
                     "方向": log.direction,
                     "消息": log.message,
-                    "详情": log.details
+                    "详情": details[:50] + "..." if len(details) > 50 else details
                 })
             
-            df = pd.DataFrame(log_data)
-            st.dataframe(df, use_container_width=True, height=400)
-            
-            # 导出功能
-            csv = df.to_csv(index=False, encoding='utf-8-sig')
-            st.download_button(
-                label="📥 导出日志 (CSV)",
-                data=csv,
-                file_name=f"comm_logs_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                mime="text/csv",
-                use_container_width=True
-            )
+            if table_data:
+                df = pd.DataFrame(table_data)
+                st.dataframe(df, use_container_width=True, height=400)
+            else:
+                st.info("暂无日志数据")
         else:
-            st.info("📭 暂无日志数据")
+            st.info("📭 暂无通信日志")
+    
+    st.markdown("---")
+    
+    # 清空日志按钮
+    col_clear1, col_clear2, col_clear3 = st.columns([1, 2, 1])
+    with col_clear2:
+        if st.button("🗑️ 清空所有日志", use_container_width=True, type="secondary"):
+            comm.logs.clear()
+            comm.planning_records.clear()
+            st.success("✅ 所有日志已清空")
+            st.rerun()
 # ==================== 页面渲染函数 ====================
 def render_planning_page(drone_speed: int, flight_alt: float, auto_save: bool):
     st.header("🗺️ 航线规划 - 智能避障")
