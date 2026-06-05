@@ -815,7 +815,7 @@ def create_planning_map(center_gcj: List[float], points_gcj: Dict, obstacles_gcj
                         straight_blocked: bool = True, flight_altitude: float = 50,
                         drone_pos: Optional[List] = None, direction: str = "最佳航线",
                         safety_radius: float = 5) -> folium.Map:
-    """创建规划地图 - 完整版"""
+    """创建规划地图 - 完整版（起点绿色圆、终点红色圆、无人机蓝色圆）"""
     tiles = config.GAODE_SATELLITE_URL
     m = folium.Map(location=[center_gcj[1], center_gcj[0]], zoom_start=16, tiles=tiles, attr="高德卫星地图")
 
@@ -845,7 +845,7 @@ def create_planning_map(center_gcj: List[float], points_gcj: Dict, obstacles_gcj
                 popup=f"🚧 {obs.get('name')}\n高度: {height}m"
             ).add_to(m)
 
-    # ========== 2. 绘制起点和终点 ==========
+    # ========== 2. 绘制起点（绿色标记 + 绿色安全半径圆） ==========
     if points_gcj.get('A'):
         # 起点标记
         folium.Marker(
@@ -853,7 +853,7 @@ def create_planning_map(center_gcj: List[float], points_gcj: Dict, obstacles_gcj
             popup="🟢 起点",
             icon=folium.Icon(color="green", icon="play", prefix="fa")
         ).add_to(m)
-        # 起点安全半径圆（绿色半透明）
+        # 起点安全半径圆（绿色半透明）- 只保留这一个
         folium.Circle(
             radius=safety_radius,
             location=[points_gcj['A'][1], points_gcj['A'][0]],
@@ -862,6 +862,7 @@ def create_planning_map(center_gcj: List[float], points_gcj: Dict, obstacles_gcj
             popup=f"🛡️ 起点安全半径: {safety_radius}米"
         ).add_to(m)
     
+    # ========== 3. 绘制终点（红色标记 + 红色安全半径圆） ==========
     if points_gcj.get('B'):
         # 终点标记
         folium.Marker(
@@ -869,7 +870,7 @@ def create_planning_map(center_gcj: List[float], points_gcj: Dict, obstacles_gcj
             popup="🔴 终点",
             icon=folium.Icon(color="red", icon="stop", prefix="fa")
         ).add_to(m)
-        # 终点安全半径圆（红色半透明）
+        # 终点安全半径圆（红色半透明）- 只保留这一个
         folium.Circle(
             radius=safety_radius,
             location=[points_gcj['B'][1], points_gcj['B'][0]],
@@ -878,7 +879,7 @@ def create_planning_map(center_gcj: List[float], points_gcj: Dict, obstacles_gcj
             popup=f"🛡️ 终点安全半径: {safety_radius}米"
         ).add_to(m)
 
-    # ========== 3. 绘制规划路径 ==========
+    # ========== 4. 绘制规划路径 ==========
     if planned_path and len(planned_path) > 1:
         path_locations = [[p[1], p[0]] for p in planned_path]
         # 根据方向选择颜色
@@ -908,7 +909,7 @@ def create_planning_map(center_gcj: List[float], points_gcj: Dict, obstacles_gcj
                 popup=f"航点 {i+1}"
             ).add_to(m)
 
-    # ========== 4. 绘制直线航线（参考线） ==========
+    # ========== 5. 绘制直线航线（参考线） ==========
     if points_gcj.get('A') and points_gcj.get('B'):
         line = [[points_gcj['A'][1], points_gcj['A'][0]], [points_gcj['B'][1], points_gcj['B'][0]]]
         if straight_blocked:
@@ -924,24 +925,25 @@ def create_planning_map(center_gcj: List[float], points_gcj: Dict, obstacles_gcj
                 dash_array='5,5', popup="直线航线"
             ).add_to(m)
 
-    # ========== 5. 绘制无人机当前位置的安全半径 ==========
+    # ========== 6. 绘制无人机当前位置（蓝色安全半径圆 + 飞机标记） ==========
     if drone_pos:
+        # 无人机安全半径圆（蓝色半透明）
         folium.Circle(
             radius=safety_radius, 
             location=[drone_pos[1], drone_pos[0]], 
             color="blue", weight=2, fill=True,
             fill_color="blue", fill_opacity=0.25, 
-            popup=f"🛡️ 当前位置安全半径: {safety_radius}米"
+            popup=f"🛡️ 无人机安全半径: {safety_radius}米"
         ).add_to(m)
         
-        # 无人机位置标记
+        # 无人机位置标记（蓝色飞机图标）
         folium.Marker(
             [drone_pos[1], drone_pos[0]],
             popup="🚁 无人机当前位置",
             icon=folium.Icon(color="blue", icon="plane", prefix="fa")
         ).add_to(m)
 
-    # ========== 6. 绘制历史飞行轨迹 ==========
+    # ========== 7. 绘制历史飞行轨迹 ==========
     if flight_history and len(flight_history) > 1:
         trail = [[p[1], p[0]] for p in flight_history if len(p) >= 2]
         if len(trail) > 1:
