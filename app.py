@@ -2003,70 +2003,98 @@ def update_flight_simulation():
 
 # ==================== 障碍物管理页面 ====================
 def render_obstacle_management_page(flight_alt: float):
+    """障碍物管理页面 - 专业地面站风格"""
     st.header("🚧 障碍物管理")
-    c1, c2, c3, c4 = st.columns(4)
-    with c1:
-        st.info(f"📊 当前共 {len(st.session_state.obstacles_gcj)} 个障碍物")
-    with c2:
-        st.info(f"🛡️ 安全半径: {st.session_state.safety_radius}米")
-    with c3:
-        if os.path.exists(config.CONFIG_FILE):
-            try:
-                with open(config.CONFIG_FILE, 'r', encoding='utf-8') as f:
-                    save_time = json.load(f).get('save_time', '未知')
-                    st.info(f"💾 最后保存: {save_time}")
-            except:
-                st.info("💾 未保存")
-        else:
-            st.info("💾 未保存")
-    with c4:
-        backup_count = len([f for f in os.listdir(config.BACKUP_DIR) if f.startswith(config.CONFIG_FILE) and f.endswith('.bak')])
-        st.info(f"📦 备份数量: {backup_count}")
-
+    
+    # ==================== 顶部统计卡片 ====================
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.markdown(f"""
+        <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+                    border-radius: 12px; padding: 15px; text-align: center; color: white;">
+            <div style="font-size: 28px; font-weight: bold;">{len(st.session_state.obstacles_gcj)}</div>
+            <div style="font-size: 12px; opacity: 0.9;">📊 障碍物总数</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col2:
+        high_obs = sum(1 for obs in st.session_state.obstacles_gcj if obs.get('height', 30) > flight_alt)
+        st.markdown(f"""
+        <div style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); 
+                    border-radius: 12px; padding: 15px; text-align: center; color: white;">
+            <div style="font-size: 28px; font-weight: bold;">{high_obs}</div>
+            <div style="font-size: 12px; opacity: 0.9;">🔴 需避让障碍物</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col3:
+        safe_obs = len(st.session_state.obstacles_gcj) - high_obs
+        st.markdown(f"""
+        <div style="background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); 
+                    border-radius: 12px; padding: 15px; text-align: center; color: white;">
+            <div style="font-size: 28px; font-weight: bold;">{safe_obs}</div>
+            <div style="font-size: 12px; opacity: 0.9;">🟠 安全障碍物</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col4:
+        total_vertices = sum(len(obs.get('polygon', [])) for obs in st.session_state.obstacles_gcj)
+        st.markdown(f"""
+        <div style="background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%); 
+                    border-radius: 12px; padding: 15px; text-align: center; color: white;">
+            <div style="font-size: 28px; font-weight: bold;">{total_vertices}</div>
+            <div style="font-size: 12px; opacity: 0.9;">📍 总顶点数</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
     st.markdown("---")
-    cols = st.columns(5)
-    with cols[0]:
+    
+    # ==================== 工具栏 ====================
+    st.markdown("### 🛠️ 工具栏")
+    
+    # 第一行工具按钮
+    tool_cols = st.columns([1, 1, 1, 1, 2])
+    
+    with tool_cols[0]:
         if st.button("💾 保存配置", use_container_width=True, type="primary"):
             if save_obstacles(st.session_state.obstacles_gcj):
                 st.success(f"✅ 已保存 {len(st.session_state.obstacles_gcj)} 个障碍物")
                 st.balloons()
-                # 移除 time.sleep 和 st.rerun()，让用户看到成功提示
-    with cols[1]:
-        if st.button("📂 加载配置", use_container_width=True):
-            loaded = load_obstacles()
-            if loaded is not None and len(loaded) > 0:
-                st.session_state.obstacles_gcj = loaded
-                # 重置所有选中状态
-                for obs in st.session_state.obstacles_gcj:
-                    obs['selected'] = False
-                update_path_after_obstacle_change(flight_alt)
-                st.success(f"✅ 已加载 {len(loaded)} 个障碍物")
-                st.rerun()
-            elif loaded is not None and len(loaded) == 0:
-                st.session_state.obstacles_gcj = []
-                update_path_after_obstacle_change(flight_alt)
-                st.info("📭 配置文件中没有障碍物数据")
-                st.rerun()
-            else:
-                st.warning("⚠️ 未找到配置文件或配置文件损坏")
-    with cols[2]:
+    
+    with tool_cols[1]:
+        # 导出功能始终可用
         if st.session_state.obstacles_gcj:
-            config_data = {'obstacles': st.session_state.obstacles_gcj, 'count': len(st.session_state.obstacles_gcj),
-                           'export_time': datetime.now().strftime("%Y-%m-%d %H:%M:%S"), 'version': 'v13.2'}
-            st.download_button(label="📥 导出配置", data=json.dumps(config_data, ensure_ascii=False, indent=2),
-                               file_name=f"obstacles_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
-                               mime="application/json", use_container_width=True)
+            config_data = {
+                'obstacles': st.session_state.obstacles_gcj, 
+                'count': len(st.session_state.obstacles_gcj),
+                'export_time': datetime.now().strftime("%Y-%m-%d %H:%M:%S"), 
+                'version': 'v13.2'
+            }
+            st.download_button(
+                label="📥 导出配置", 
+                data=json.dumps(config_data, ensure_ascii=False, indent=2),
+                file_name=f"obstacles_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+                mime="application/json", 
+                use_container_width=True
+            )
         else:
-            st.button("📥 导出配置", use_container_width=True, disabled=True)
-            st.caption("📭 暂无障碍物可导出")
-    with cols[3]:
+            st.download_button(
+                label="📥 导出配置", 
+                data=json.dumps({"obstacles": [], "count": 0}, ensure_ascii=False, indent=2),
+                file_name=f"obstacles_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+                mime="application/json", 
+                use_container_width=True,
+                disabled=True
+            )
+            st.caption("📭 暂无障碍物")
+    
+    with tool_cols[2]:
         latest_backup = get_latest_backup()
         if latest_backup:
             if st.button("🔄 恢复备份", use_container_width=True):
                 if restore_from_backup(latest_backup):
-                    # 重新加载障碍物
                     st.session_state.obstacles_gcj = load_obstacles()
-                    # 重置选中状态
                     for obs in st.session_state.obstacles_gcj:
                         obs['selected'] = False
                     update_path_after_obstacle_change(flight_alt)
@@ -2076,12 +2104,11 @@ def render_obstacle_management_page(flight_alt: float):
                     st.error("❌ 恢复失败")
         else:
             st.button("🔄 恢复备份", use_container_width=True, disabled=True)
-            st.caption("📭 暂无可用备份")
-    with cols[4]:
+            st.caption("📭 暂无备份")
+    
+    with tool_cols[3]:
         if st.button("🗑️ 清除全部", use_container_width=True):
-            # 添加确认对话框
             if st.session_state.obstacles_gcj:
-                # 自动备份当前数据
                 if st.session_state.auto_backup:
                     backup_config()
                 st.session_state.obstacles_gcj = []
@@ -2090,151 +2117,202 @@ def render_obstacle_management_page(flight_alt: float):
                 st.success("✅ 已清除所有障碍物")
                 st.rerun()
             else:
-                st.warning("⚠️ 当前没有障碍物可清除")
-
+                st.warning("⚠️ 无障碍物")
+    
+    with tool_cols[4]:
+        # 系统信息显示
+        if os.path.exists(config.CONFIG_FILE):
+            try:
+                with open(config.CONFIG_FILE, 'r', encoding='utf-8') as f:
+                    save_time = json.load(f).get('save_time', '未知')
+                st.info(f"💾 最后保存: {save_time}")
+            except:
+                st.info("💾 未保存")
+        else:
+            st.info("💾 未保存")
+    
     st.markdown("---")
-    high_obs = sum(1 for obs in st.session_state.obstacles_gcj if obs.get('height', 30) > flight_alt)
-    c1, c2, c3, c4 = st.columns(4)
-    with c1:
-        st.metric("🔴 需避让障碍物", high_obs)
-    with c2:
-        st.metric("🟠 安全障碍物", len(st.session_state.obstacles_gcj) - high_obs)
-    with c3:
-        st.metric("📍 总顶点数", sum(len(obs.get('polygon', [])) for obs in st.session_state.obstacles_gcj))
-    with c4:
+    
+    # ==================== 统计信息行 ====================
+    info_cols = st.columns(3)
+    with info_cols[0]:
         avg_height = sum(obs.get('height', 30) for obs in st.session_state.obstacles_gcj) / max(1, len(st.session_state.obstacles_gcj))
-        st.metric("📏 平均高度", f"{avg_height:.1f}m")
-
+        st.metric("📏 平均高度", f"{avg_height:.1f} m")
+    
+    with info_cols[1]:
+        backup_count = len([f for f in os.listdir(config.BACKUP_DIR) if f.startswith(config.CONFIG_FILE) and f.endswith('.bak')])
+        st.metric("📦 备份数量", backup_count)
+    
+    with info_cols[2]:
+        st.metric("🛡️ 安全半径", f"{st.session_state.safety_radius} 米")
+    
     st.markdown("---")
-    st.subheader("🎯 批量操作")
-    for obs in st.session_state.obstacles_gcj:
-        if 'selected' not in obs:
-            obs['selected'] = False
-
-    col_b1, col_b2, col_b3, col_b4 = st.columns(4)
-    with col_b1:
-        select_all = st.checkbox("☑️ 全选所有障碍物")
-        if select_all:
-            for obs in st.session_state.obstacles_gcj:
-                obs['selected'] = True
-    with col_b2:
-        if st.button("🗑️ 批量删除", use_container_width=True, type="primary"):
-            selected = [i for i, obs in enumerate(st.session_state.obstacles_gcj) if obs.get('selected', False)]
-            if selected:
-                # 批量删除前自动备份
-                if st.session_state.auto_backup:
-                    backup_config()
-                for i in reversed(selected):
-                    st.session_state.obstacles_gcj.pop(i)
-                # 删除后自动保存
-                save_obstacles(st.session_state.obstacles_gcj)
-                update_path_after_obstacle_change(flight_alt)
-                st.success(f"✅ 已删除 {len(selected)} 个障碍物")
-                st.rerun()
-            else:
-                st.warning("⚠️ 请先选择要删除的障碍物")
-    with col_b3:
-        batch_height = st.number_input("批量高度(m)", 1, 200, 30, 5, key="batch_height")
-        if st.button("📏 批量设置高度", use_container_width=True):
-            selected = [i for i, obs in enumerate(st.session_state.obstacles_gcj) if obs.get('selected', False)]
-            if selected:
-                for i in selected:
-                    st.session_state.obstacles_gcj[i]['height'] = batch_height
-                if st.session_state.auto_backup:
+    
+    # ==================== 批量操作面板 ====================
+    with st.expander("🎯 批量操作", expanded=False):
+        # 初始化选中状态
+        for obs in st.session_state.obstacles_gcj:
+            if 'selected' not in obs:
+                obs['selected'] = False
+        
+        # 批量操作按钮行
+        batch_cols = st.columns([1, 1, 1, 2])
+        
+        with batch_cols[0]:
+            select_all = st.checkbox("☑️ 全选", key="select_all_obs")
+            if select_all:
+                for obs in st.session_state.obstacles_gcj:
+                    obs['selected'] = True
+        
+        with batch_cols[1]:
+            if st.button("🗑️ 批量删除", use_container_width=True, type="primary"):
+                selected = [i for i, obs in enumerate(st.session_state.obstacles_gcj) if obs.get('selected', False)]
+                if selected:
+                    if st.session_state.auto_backup:
+                        backup_config()
+                    for i in reversed(selected):
+                        st.session_state.obstacles_gcj.pop(i)
                     save_obstacles(st.session_state.obstacles_gcj)
-                update_path_after_obstacle_change(flight_alt)
-                st.success(f"✅ 已为 {len(selected)} 个障碍物设置高度为 {batch_height}m")
-                st.rerun()
-            else:
-                st.warning("⚠️ 请先选择要修改的障碍物")
-    with col_b4:
-        if st.button("🏷️ 批量重命名", use_container_width=True):
-            selected = [i for i, obs in enumerate(st.session_state.obstacles_gcj) if obs.get('selected', False)]
-            if selected:
-                st.session_state.show_rename_dialog = True
-            else:
-                st.warning("⚠️ 请先选择要重命名的障碍物")
-
-    if st.session_state.get('show_rename_dialog', False):
-        with st.expander("🏷️ 批量重命名", expanded=True):
-            c_n1, c_n2 = st.columns(2)
-            with c_n1:
-                name_prefix = st.text_input("名称前缀", value="建筑物")
-                start_number = st.number_input("起始编号", 1, 1, 1)
-            with c_n2:
-                name_suffix = st.text_input("名称后缀", value="")
-            col_confirm, col_cancel = st.columns(2)
-            with col_confirm:
-                if st.button("确认重命名", use_container_width=True, type="primary"):
-                    selected = [i for i, obs in enumerate(st.session_state.obstacles_gcj) if obs.get('selected', False)]
-                    for idx, i in enumerate(selected):
-                        st.session_state.obstacles_gcj[i]['name'] = f"{name_prefix}{start_number + idx}{name_suffix}"
+                    update_path_after_obstacle_change(flight_alt)
+                    st.success(f"✅ 已删除 {len(selected)} 个障碍物")
+                    st.rerun()
+                else:
+                    st.warning("⚠️ 请先选择障碍物")
+        
+        with batch_cols[2]:
+            batch_height = st.number_input("批量高度(m)", 1, 200, 30, 5, key="batch_height", label_visibility="collapsed")
+            if st.button("📏 批量设置", use_container_width=True):
+                selected = [i for i, obs in enumerate(st.session_state.obstacles_gcj) if obs.get('selected', False)]
+                if selected:
+                    for i in selected:
+                        st.session_state.obstacles_gcj[i]['height'] = batch_height
                     if st.session_state.auto_backup:
                         save_obstacles(st.session_state.obstacles_gcj)
-                    st.session_state.show_rename_dialog = False
-                    st.success(f"✅ 已重命名 {len(selected)} 个障碍物")
+                    update_path_after_obstacle_change(flight_alt)
+                    st.success(f"✅ 已设置 {len(selected)} 个障碍物")
                     st.rerun()
-            with col_cancel:
-                if st.button("取消"):
-                    st.session_state.show_rename_dialog = False
-                    st.rerun()
-
+                else:
+                    st.warning("⚠️ 请先选择障碍物")
+        
+        with batch_cols[3]:
+            if st.button("🏷️ 批量重命名", use_container_width=True):
+                selected = [i for i, obs in enumerate(st.session_state.obstacles_gcj) if obs.get('selected', False)]
+                if selected:
+                    st.session_state.show_rename_dialog = True
+                else:
+                    st.warning("⚠️ 请先选择障碍物")
+        
+        # 批量重命名对话框
+        if st.session_state.get('show_rename_dialog', False):
+            with st.container():
+                st.markdown("---")
+                st.markdown("#### 🏷️ 批量重命名")
+                
+                rename_cols = st.columns([1, 1, 1, 1])
+                with rename_cols[0]:
+                    name_prefix = st.text_input("前缀", value="建筑物")
+                with rename_cols[1]:
+                    start_number = st.number_input("起始编号", 1, 100, 1)
+                with rename_cols[2]:
+                    name_suffix = st.text_input("后缀", value="")
+                
+                with rename_cols[3]:
+                    col_confirm, col_cancel = st.columns(2)
+                    with col_confirm:
+                        if st.button("确认", use_container_width=True, type="primary"):
+                            selected = [i for i, obs in enumerate(st.session_state.obstacles_gcj) if obs.get('selected', False)]
+                            for idx, i in enumerate(selected):
+                                st.session_state.obstacles_gcj[i]['name'] = f"{name_prefix}{start_number + idx}{name_suffix}"
+                            if st.session_state.auto_backup:
+                                save_obstacles(st.session_state.obstacles_gcj)
+                            st.session_state.show_rename_dialog = False
+                            st.success(f"✅ 已重命名 {len(selected)} 个障碍物")
+                            st.rerun()
+                    with col_cancel:
+                        if st.button("取消", use_container_width=True):
+                            st.session_state.show_rename_dialog = False
+                            st.rerun()
+    
     st.markdown("---")
+    
+    # ==================== 标签页切换 ====================
     tab1, tab2 = st.tabs(["📋 列表视图", "🗺️ 地图视图"])
+    
     with tab1:
         render_obstacle_list_view(flight_alt)
+    
     with tab2:
         render_obstacle_map_view(flight_alt)
 
 
 def render_obstacle_list_view(flight_alt: float):
+    """障碍物列表视图 - 卡片网格布局"""
     st.subheader("📝 障碍物列表")
     st.caption("💡 提示：勾选复选框后可使用批量操作功能")
-    if st.session_state.obstacles_gcj:
-        items_per_row = 2
-        rows = (len(st.session_state.obstacles_gcj) + items_per_row - 1) // items_per_row
-        for row in range(rows):
-            cols = st.columns(items_per_row)
-            for col_idx in range(items_per_row):
-                idx = row * items_per_row + col_idx
-                if idx < len(st.session_state.obstacles_gcj):
-                    render_obstacle_card(idx, flight_alt, cols[col_idx])
-    else:
+    
+    if not st.session_state.obstacles_gcj:
         st.info("📭 暂无任何障碍物，可以在「地图视图」中绘制添加")
+        return
+    
+    # 使用3列网格布局，更紧凑
+    items_per_row = 3
+    rows = (len(st.session_state.obstacles_gcj) + items_per_row - 1) // items_per_row
+    
+    for row in range(rows):
+        cols = st.columns(items_per_row)
+        for col_idx in range(items_per_row):
+            idx = row * items_per_row + col_idx
+            if idx < len(st.session_state.obstacles_gcj):
+                render_obstacle_card(idx, flight_alt, cols[col_idx])
 
 
 def render_obstacle_card(idx: int, flight_alt: float, container):
+    """单个障碍物卡片"""
     obs = st.session_state.obstacles_gcj[idx]
+    
     with container:
         with st.container(border=True):
             height = obs.get('height', 30)
             color = "🔴" if height > flight_alt else "🟠"
             name = obs.get('name', f'障碍物{idx+1}')
-            c1, c2 = st.columns([1, 5])
-            with c1:
+            
+            # 标题行：复选框 + 名称
+            header_cols = st.columns([1, 5])
+            with header_cols[0]:
                 checked = st.checkbox("", key=f"select_card_{idx}", value=obs.get('selected', False))
                 st.session_state.obstacles_gcj[idx]['selected'] = checked
-            with c2:
+            with header_cols[1]:
                 st.markdown(f"**{color} {name}**")
-            c_h1, c_h2 = st.columns(2)
-            with c_h1:
+            
+            # 详细信息
+            info_cols = st.columns(2)
+            with info_cols[0]:
                 st.caption(f"📏 高度: {height}m")
-            with c_h2:
+            with info_cols[1]:
                 st.caption(f"📍 顶点: {len(obs.get('polygon', []))}个")
-            new_h = st.number_input("调整高度", min_value=1, max_value=200, value=height, step=5,
-                                    key=f"quick_edit_{idx}", label_visibility="collapsed")
+            
+            # 快速编辑
+            new_h = st.number_input(
+                "高度", 
+                min_value=1, 
+                max_value=200, 
+                value=height, 
+                step=5,
+                key=f"quick_edit_{idx}", 
+                label_visibility="collapsed"
+            )
             if new_h != height:
                 obs['height'] = new_h
                 if st.session_state.auto_backup:
                     save_obstacles(st.session_state.obstacles_gcj)
                 update_path_after_obstacle_change(flight_alt)
                 st.rerun()
+            
+            # 删除按钮
             if st.button("🗑️ 删除", key=f"delete_card_{idx}", use_container_width=True):
-                # 删除前自动备份
                 if st.session_state.auto_backup:
                     backup_config()
                 st.session_state.obstacles_gcj.pop(idx)
-                # 删除后自动保存
                 save_obstacles(st.session_state.obstacles_gcj)
                 update_path_after_obstacle_change(flight_alt)
                 st.success(f"✅ 已删除 {name}")
@@ -2242,43 +2320,88 @@ def render_obstacle_card(idx: int, flight_alt: float, container):
 
 
 def render_obstacle_map_view(flight_alt: float):
+    """障碍物地图视图"""
     st.subheader("🗺️ 地图视图")
     st.caption("✏️ 使用左上角绘制工具绘制新障碍物 | 🖱️ 点击障碍物查看详细信息 | 🎨 红色=需避让，橙色=安全")
+    
     tiles = config.GAODE_SATELLITE_URL
-    m = folium.Map(location=[config.SCHOOL_CENTER_GCJ[1], config.SCHOOL_CENTER_GCJ[0]], zoom_start=16, tiles=tiles, attr="高德卫星地图")
-
+    m = folium.Map(
+        location=[config.SCHOOL_CENTER_GCJ[1], config.SCHOOL_CENTER_GCJ[0]], 
+        zoom_start=16, 
+        tiles=tiles, 
+        attr="高德卫星地图"
+    )
+    
+    # 添加绘制工具
     draw = plugins.Draw(
-        export=True, position='topleft',
+        export=True, 
+        position='topleft',
         draw_options={
-            'polygon': {'allowIntersection': False, 'showArea': True, 'color': '#ff0000',
-                        'fillColor': '#ff0000', 'fillOpacity': 0.4},
-            'polyline': False, 'rectangle': False, 'circle': False, 'marker': False, 'circlemarker': False
+            'polygon': {
+                'allowIntersection': False, 
+                'showArea': True, 
+                'color': '#ff0000',
+                'fillColor': '#ff0000', 
+                'fillOpacity': 0.4
+            },
+            'polyline': False, 
+            'rectangle': False, 
+            'circle': False, 
+            'marker': False, 
+            'circlemarker': False
         },
         edit_options={'edit': True, 'remove': True}
     )
     m.add_child(draw)
-
+    
+    # 绘制障碍物
     for obs in st.session_state.obstacles_gcj:
         coords = obs.get('polygon', [])
         height = obs.get('height', 30)
         color = "red" if height > flight_alt else "orange"
+        
         if coords and len(coords) >= 3:
             popup_text = f"""
-            <div style="font-family: sans-serif;">
-            <b>🏢 {obs.get('name')}</b><br>
-            高度: {height} 米<br>
-            ID: {obs.get('id', 'N/A')}<br>
+            <div style="font-family: sans-serif; min-width: 150px;">
+                <b>🏢 {obs.get('name', '未知')}</b><br>
+                📏 高度: {height} 米<br>
+                📍 顶点: {len(coords)} 个<br>
+                🆔 ID: {obs.get('id', 'N/A')[:12]}
             </div>
             """
-            folium.Polygon([[c[1], c[0]] for c in coords], color=color, weight=3, fill=True,
-                          fill_color=color, fill_opacity=0.5, popup=folium.Popup(popup_text, max_width=300)).add_to(m)
-
-    folium.Marker([config.DEFAULT_A_GCJ[1], config.DEFAULT_A_GCJ[0]], popup="起点",
-                 icon=folium.Icon(color='green', icon='play', prefix='fa')).add_to(m)
-    folium.Marker([config.DEFAULT_B_GCJ[1], config.DEFAULT_B_GCJ[0]], popup="终点",
-                 icon=folium.Icon(color='red', icon='flag-checkered', prefix='fa')).add_to(m)
-
-    output = st_folium(m, width=800, height=550, key="obstacle_map_view", returned_objects=["last_active_drawing"])
+            folium.Polygon(
+                [[c[1], c[0]] for c in coords], 
+                color=color, 
+                weight=3, 
+                fill=True,
+                fill_color=color, 
+                fill_opacity=0.5, 
+                popup=folium.Popup(popup_text, max_width=250)
+            ).add_to(m)
+    
+    # 添加起点/终点标记
+    folium.Marker(
+        [config.DEFAULT_A_GCJ[1], config.DEFAULT_A_GCJ[0]], 
+        popup="🟢 起点 (默认)",
+        icon=folium.Icon(color='green', icon='play', prefix='fa')
+    ).add_to(m)
+    
+    folium.Marker(
+        [config.DEFAULT_B_GCJ[1], config.DEFAULT_B_GCJ[0]], 
+        popup="🔴 终点 (默认)",
+        icon=folium.Icon(color='red', icon='flag-checkered', prefix='fa')
+    ).add_to(m)
+    
+    # 处理地图输出
+    output = st_folium(
+        m, 
+        width=850, 
+        height=550, 
+        key="obstacle_map_view", 
+        returned_objects=["last_active_drawing"]
+    )
+    
+    # 处理绘制的新障碍物
     if output and output.get("last_active_drawing"):
         last = output["last_active_drawing"]
         if last and last.get("geometry") and last["geometry"].get("type") == "Polygon":
@@ -2287,17 +2410,82 @@ def render_obstacle_map_view(flight_alt: float):
             if len(poly) >= 3 and st.session_state.pending_obstacle is None and validate_polygon(poly):
                 st.session_state.pending_obstacle = poly
                 st.rerun()
-
+    
+    # 显示添加障碍物对话框
     if st.session_state.pending_obstacle is not None:
         render_obstacle_dialog()
 
 
+def render_obstacle_dialog():
+    """添加障碍物对话框"""
+    st.markdown("---")
+    st.subheader("📝 添加新障碍物")
+    
+    info_cols = st.columns(2)
+    with info_cols[0]:
+        st.info(f"📐 检测到多边形，共 {len(st.session_state.pending_obstacle)} 个顶点")
+    
+    with info_cols[1]:
+        st.info(f"🖱️ 双击完成绘制，点击确认添加")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        new_name = st.text_input(
+            "障碍物名称", 
+            value=f"建筑物{len(st.session_state.obstacles_gcj) + 1}",
+            help="为障碍物设置一个便于识别的名称"
+        )
+    with col2:
+        new_height = st.number_input(
+            "障碍物高度 (米)", 
+            min_value=1, 
+            max_value=200, 
+            value=30, 
+            step=5, 
+            key="height_input",
+            help="低于飞行高度的障碍物不会触发避让"
+        )
+    
+    col_ok, col_cancel = st.columns(2)
+    with col_ok:
+        if st.button("✅ 确认添加", use_container_width=True, type="primary"):
+            new_obstacle = {
+                "name": new_name,
+                "polygon": st.session_state.pending_obstacle,
+                "height": new_height,
+                "selected": False,
+                "id": f"obs_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{len(st.session_state.obstacles_gcj)}",
+                "created_time": datetime.now().isoformat()
+            }
+            st.session_state.obstacles_gcj.append(new_obstacle)
+            
+            if st.session_state.auto_backup:
+                save_obstacles(st.session_state.obstacles_gcj)
+            
+            st.session_state.planned_path = create_avoidance_path(
+                st.session_state.points_gcj['A'], st.session_state.points_gcj['B'],
+                st.session_state.obstacles_gcj, st.session_state.last_flight_altitude,
+                st.session_state.current_direction, st.session_state.safety_radius
+            )
+            
+            st.session_state.pending_obstacle = None
+            st.success(f"✅ 已添加 {new_name}，高度 {new_height} 米")
+            st.rerun()
+    
+    with col_cancel:
+        if st.button("❌ 取消", use_container_width=True):
+            st.session_state.pending_obstacle = None
+            st.rerun()
+
+
 def update_path_after_obstacle_change(flight_alt: float):
+    """障碍物变化后更新路径"""
     if st.session_state.points_gcj['A'] and st.session_state.points_gcj['B']:
         st.session_state.planned_path = create_avoidance_path(
             st.session_state.points_gcj['A'], st.session_state.points_gcj['B'],
             st.session_state.obstacles_gcj, flight_alt,
-            st.session_state.current_direction, st.session_state.safety_radius)
+            st.session_state.current_direction, st.session_state.safety_radius
+        )
 # ==================== 主程序 ====================
 def main():
     st.set_page_config(page_title="无人机地面站系统", layout="wide")
