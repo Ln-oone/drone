@@ -861,7 +861,7 @@ def render_sidebar() -> Tuple[str, int, float, bool]:
     page = st.sidebar.radio("选择功能模块", ["🗺️ 航线规划", "📡 飞行监控", "🔗 通信拓扑", "🚧 障碍物管理"])
     st.sidebar.markdown("---")
     st.sidebar.subheader("⚡ 无人机速度设置")
-    drone_speed = st.sidebar.slider("飞行速度系数", 10, 100, 50, 5)
+    drone_speed = st.sidebar.slider("飞行速度系数", 0, 100, 50, 5)
     st.sidebar.markdown("---")
     st.sidebar.subheader("✈️ 无人机飞行高度")
     flight_alt = st.sidebar.slider("飞行高度 (m)", 0, 120, 30, 5)
@@ -1186,7 +1186,6 @@ def render_communication_page():
                 st.success("✅ 日志已清空")
                 st.rerun()
 # ==================== 页面渲染函数 ====================
-# ==================== 航线规划页面（整合坐标转换）====================
 def render_planning_page(drone_speed: int, flight_alt: float, auto_save: bool):
     """航线规划主页面 - 整合坐标转换功能"""
     st.header("🗺️ 航线规划")
