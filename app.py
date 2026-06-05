@@ -1029,8 +1029,6 @@ def render_sidebar() -> Tuple[str, int, float, bool]:
     st.sidebar.subheader("💾 自动保存")
     auto_save = st.sidebar.checkbox("自动保存障碍物", st.session_state.auto_backup)
     return page, drone_speed, flight_alt, auto_save
-
-# ==================== 通信拓扑页面 ====================
 # ==================== 通信拓扑页面 ====================
 def render_communication_page():
     st.header("🔗 通信链路拓扑与数据流")
