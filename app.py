@@ -858,13 +858,13 @@ def check_straight_blocked(points_gcj: Dict, obstacles_gcj: List[Dict], flight_a
 
 def render_sidebar() -> Tuple[str, int, float, bool]:
     st.sidebar.title("🎛️ 导航菜单")
-    page = st.sidebar.radio("选择功能模块", ["🗺️ 航线规划", "📡 飞行监控", "🔗 通信拓扑", "🚧 障碍物管理", "🔄 坐标转换"])
+    page = st.sidebar.radio("选择功能模块", ["🗺️ 航线规划", "📡 飞行监控", "🔗 通信拓扑", "🚧 障碍物管理"])
     st.sidebar.markdown("---")
     st.sidebar.subheader("⚡ 无人机速度设置")
     drone_speed = st.sidebar.slider("飞行速度系数", 10, 100, 50, 5)
     st.sidebar.markdown("---")
     st.sidebar.subheader("✈️ 无人机飞行高度")
-    flight_alt = st.sidebar.slider("飞行高度 (m)", 10, 200, 50, 5)
+    flight_alt = st.sidebar.slider("飞行高度 (m)", 0, 120, 30, 5)
     st.sidebar.markdown("---")
     st.sidebar.subheader("🛡️ 安全半径设置")
     new_safety_radius = st.sidebar.slider("安全半径 (米)", 1, 20, st.session_state.safety_radius, 1)
