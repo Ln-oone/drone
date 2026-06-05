@@ -816,167 +816,151 @@ def create_planning_map(center_gcj: List[float], points_gcj: Dict, obstacles_gcj
 # ==================== 坐标转换页面 ====================
 def render_coordinate_conversion_page():
     st.header("🔄 WGS-84 ↔ GCJ-02 坐标转换")
-    st.markdown("""
-    ### 📖 说明
-    - **WGS-84**：国际通用坐标系（GPS使用）
-    - **GCJ-02**：中国国测局坐标系（高德、谷歌中国使用）
-    - 在中国大陆范围内，GCJ-02相对于WGS-84有约几十到几百米的偏移
-    """)
-    st.markdown("---")
-
-    # 单点转换
-    st.subheader("📍 单点坐标转换")
-    col1, col2 = st.columns(2)
-    with col1:
-        st.markdown("#### 输入坐标")
-        convert_direction = st.radio("转换方向", ["WGS-84 → GCJ-02", "GCJ-02 → WGS-84"], horizontal=True, key="convert_direction")
-        input_lng = st.number_input("经度 (Longitude)", value=118.748726, format="%.6f", key="conv_lng")
-        input_lat = st.number_input("纬度 (Latitude)", value=32.233881, format="%.6f", key="conv_lat")
-        if st.button("🔄 执行转换", use_container_width=True, type="primary"):
-            if convert_direction == "WGS-84 → GCJ-02":
-                out_lng, out_lat = CoordinateConverter.wgs84_to_gcj02(input_lng, input_lat)
-                delta_lng, delta_lat = out_lng - input_lng, out_lat - input_lat
-                st.session_state.conv_result = {
-                    "input": (input_lng, input_lat),
-                    "output": (out_lng, out_lat),
-                    "delta": (delta_lng, delta_lat),
-                    "direction": "WGS-84 → GCJ-02"
-                }
+    
+    # 转换类型选择
+    convert_type = st.radio("转换类型", ["单点转换", "批量转换"], horizontal=True)
+    
+    if convert_type == "单点转换":
+        st.markdown("---")
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("#### 输入坐标")
+            direction = st.radio("转换方向", ["WGS-84 → GCJ-02", "GCJ-02 → WGS-84"], horizontal=True)
+            lng = st.number_input("经度", value=118.748726, format="%.6f")
+            lat = st.number_input("纬度", value=32.233881, format="%.6f")
+            
+            if st.button("🔄 执行转换", type="primary", use_container_width=True):
+                try:
+                    if direction == "WGS-84 → GCJ-02":
+                        out_lng, out_lat = CoordinateConverter.wgs84_to_gcj02(lng, lat)
+                        st.session_state.conv_result = {
+                            "input": (lng, lat),
+                            "output": (out_lng, out_lat),
+                            "direction": "WGS-84 → GCJ-02"
+                        }
+                    else:
+                        out_lng, out_lat = CoordinateConverter.gcj02_to_wgs84(lng, lat)
+                        st.session_state.conv_result = {
+                            "input": (lng, lat),
+                            "output": (out_lng, out_lat),
+                            "direction": "GCJ-02 → WGS-84"
+                        }
+                except Exception as e:
+                    st.error(f"转换失败: {e}")
+        
+        with col2:
+            st.markdown("#### 转换结果")
+            if st.session_state.get("conv_result"):
+                res = st.session_state.conv_result
+                st.success(f"**{res['direction']}**")
+                
+                # 计算偏移量
+                delta_lng = res['output'][0] - res['input'][0]
+                delta_lat = res['output'][1] - res['input'][1]
+                delta_lng_m = delta_lng * 111000 * math.cos(math.radians(res['input'][1]))
+                delta_lat_m = delta_lat * 111000
+                
+                st.markdown(f"""
+                | 项目 | 经度 | 纬度 |
+                |------|------|------|
+                | 输入 | {res['input'][0]:.8f} | {res['input'][1]:.8f} |
+                | 输出 | {res['output'][0]:.8f} | {res['output'][1]:.8f} |
+                | 偏移量 | {delta_lng_m:.2f}米 | {delta_lat_m:.2f}米 |
+                """)
             else:
-                out_lng, out_lat = CoordinateConverter.gcj02_to_wgs84(input_lng, input_lat)
-                delta_lng, delta_lat = out_lng - input_lng, out_lat - input_lat
-                st.session_state.conv_result = {
-                    "input": (input_lng, input_lat),
-                    "output": (out_lng, out_lat),
-                    "delta": (delta_lng, delta_lat),
-                    "direction": "GCJ-02 → WGS-84"
-                }
-    with col2:
-        st.markdown("#### 转换结果")
-        if hasattr(st.session_state, 'conv_result'):
-            res = st.session_state.conv_result
-            st.success(f"**{res['direction']}**")
-            st.markdown(f"""
-            **输入坐标:**\n({res['input'][0]:.8f}, {res['input'][1]:.8f})
-            **输出坐标:**\n({res['output'][0]:.8f}, {res['output'][1]:.8f})
-            **偏移量:**\nΔ经度: {res['delta'][0]:.8f}° ≈ {res['delta'][0] * 111000 * math.cos(math.radians(res['input'][1])):.2f}米\nΔ纬度: {res['delta'][1]:.8f}° ≈ {res['delta'][1] * 111000:.2f}米
-            """)
-        else:
-            st.info("点击「执行转换」查看结果")
-
-    st.markdown("---")
-
-    # 批量转换
-    st.subheader("📊 批量坐标转换")
-    st.markdown("支持CSV格式，每行格式：经度,纬度")
-    col_batch1, col_batch2 = st.columns(2)
-    with col_batch1:
-        batch_input = st.text_area("输入坐标 (每行一个，格式: 经度,纬度)", height=200,
-                                   placeholder="118.748726,32.233881\n118.750110,32.235460\n118.749000,32.234000",
-                                   key="batch_input")
-        batch_direction = st.radio("批量转换方向", ["WGS-84 → GCJ-02", "GCJ-02 → WGS-84"], horizontal=True, key="batch_direction")
-        if st.button("📊 执行批量转换", use_container_width=True, type="primary"):
-            if batch_input.strip():
-                lines = batch_input.strip().split('\n')
-                coords = []
-                invalid_lines = []
-                for i, line in enumerate(lines):
-                    parts = line.strip().split(',')
-                    if len(parts) >= 2:
+                st.info("点击「执行转换」查看结果")
+    
+    else:  # 批量转换
+        st.markdown("---")
+        st.markdown("#### 输入坐标（每行格式：经度,纬度）")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            direction = st.radio("批量转换方向", ["WGS-84 → GCJ-02", "GCJ-02 → WGS-84"], horizontal=True)
+            
+            batch_input = st.text_area(
+                "坐标列表",
+                height=200,
+                placeholder="118.748726,32.233881\n118.750110,32.235460\n118.749000,32.234000"
+            )
+            
+            if st.button("📊 执行批量转换", type="primary", use_container_width=True):
+                if batch_input.strip():
+                    lines = batch_input.strip().split('\n')
+                    coords = []
+                    invalid_lines = []
+                    
+                    for i, line in enumerate(lines, 1):
+                        line = line.strip()
+                        if not line:
+                            continue
+                        parts = line.split(',')
+                        if len(parts) >= 2:
+                            try:
+                                lng = float(parts[0].strip())
+                                lat = float(parts[1].strip())
+                                coords.append((lng, lat))
+                            except ValueError:
+                                invalid_lines.append(i)
+                        else:
+                            invalid_lines.append(i)
+                    
+                    if invalid_lines:
+                        st.warning(f"跳过无效行: 第{', '.join(map(str, invalid_lines))}行")
+                    
+                    if coords:
                         try:
-                            lng = float(parts[0].strip())
-                            lat = float(parts[1].strip())
-                            coords.append((lng, lat))
-                        except ValueError:
-                            invalid_lines.append(i + 1)
-                    else:
-                        invalid_lines.append(i + 1)
-                if invalid_lines:
-                    st.warning(f"跳过无效行: 第{', '.join(map(str, invalid_lines))}行")
-                if coords:
-                    if batch_direction == "WGS-84 → GCJ-02":
-                        results = CoordinateConverter.convert_batch(coords, "wgs84_to_gcj02")
-                        direction_name = "WGS-84 → GCJ-02"
-                    else:
-                        results = CoordinateConverter.convert_batch(coords, "gcj02_to_wgs84")
-                        direction_name = "GCJ-02 → WGS-84"
-                    st.session_state.batch_results = {"input": coords, "output": results, "direction": direction_name}
-    with col_batch2:
-        st.markdown("#### 批量转换结果")
-        if hasattr(st.session_state, 'batch_results'):
-            res = st.session_state.batch_results
-            st.info(f"**{res['direction']}** - 共 {len(res['input'])} 个点")
-            result_data = []
-            for i, (in_coord, out_coord) in enumerate(zip(res['input'], res['output'])):
-                delta_lng = out_coord[0] - in_coord[0]
-                delta_lat = out_coord[1] - in_coord[1]
-                result_data.append({
-                    "序号": i + 1,
-                    "输入经度": f"{in_coord[0]:.8f}",
-                    "输入纬度": f"{in_coord[1]:.8f}",
-                    "输出经度": f"{out_coord[0]:.8f}",
-                    "输出纬度": f"{out_coord[1]:.8f}",
-                    "Δ经度(米)": f"{delta_lng * 111000 * math.cos(math.radians(in_coord[1])):.2f}",
-                    "Δ纬度(米)": f"{delta_lat * 111000:.2f}"
-                })
-            df = pd.DataFrame(result_data)
-            st.dataframe(df, use_container_width=True)
-            csv = df.to_csv(index=False, encoding='utf-8-sig')
-            st.download_button(label="📥 导出转换结果 (CSV)", data=csv,
-                               file_name=f"coordinate_conversion_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                               mime="text/csv", use_container_width=True)
-        else:
-            st.info("点击「执行批量转换」查看结果")
-
-    st.markdown("---")
-
-    # 偏移量计算
-    st.subheader("📏 坐标偏移量计算")
-    col_offset1, col_offset2 = st.columns(2)
-    with col_offset1:
-        offset_lng = st.number_input("经度", value=118.748726, format="%.6f", key="offset_lng")
-        offset_lat = st.number_input("纬度", value=32.233881, format="%.6f", key="offset_lat")
-        if st.button("🔍 计算偏移量", use_container_width=True):
-            delta_lng, delta_lat = CoordinateConverter.calculate_offset(offset_lng, offset_lat)
-            st.session_state.offset_result = {
-                "lng": offset_lng, "lat": offset_lat,
-                "delta_lng": delta_lng, "delta_lat": delta_lat,
-                "delta_lng_m": delta_lng * 111000 * math.cos(math.radians(offset_lat)),
-                "delta_lat_m": delta_lat * 111000
-            }
-    with col_offset2:
-        st.markdown("#### 偏移量结果")
-        if hasattr(st.session_state, 'offset_result'):
-            res = st.session_state.offset_result
-            st.markdown(f"""
-            **WGS-84 → GCJ-02 偏移**
-            | 项目 | 度数 | 距离 |
-            |------|------|------|
-            | Δ经度 | {res['delta_lng']:.8f}° | {res['delta_lng_m']:.2f}米 |
-            | Δ纬度 | {res['delta_lat']:.8f}° | {res['delta_lat_m']:.2f}米 |
-            """)
-        else:
-            st.info("点击「计算偏移量」查看结果")
-
-    st.markdown("---")
-
-    # 地图预览
-    st.subheader("🗺️ 坐标位置预览")
-    if hasattr(st.session_state, 'conv_result'):
-        res = st.session_state.conv_result
-        preview_map = folium.Map(location=[res['input'][1], res['input'][0]], zoom_start=15,
-                                 tiles=config.GAODE_SATELLITE_URL, attr="高德卫星地图")
-        folium.Marker([res['input'][1], res['input'][0]], popup=f"输入点\n({res['input'][0]:.6f}, {res['input'][1]:.6f})",
-                     icon=folium.Icon(color='red', icon='info-sign')).add_to(preview_map)
-        folium.Marker([res['output'][1], res['output'][0]], popup=f"转换后\n({res['output'][0]:.6f}, {res['output'][1]:.6f})",
-                     icon=folium.Icon(color='green', icon='ok-sign')).add_to(preview_map)
-        folium.PolyLine([[res['input'][1], res['input'][0]], [res['output'][1], res['output'][0]]],
-                       color="blue", weight=2, opacity=0.7,
-                       popup=f"偏移: {math.hypot(res['delta'][0]*111000*math.cos(math.radians(res['input'][1])), res['delta'][1]*111000):.2f}米").add_to(preview_map)
-        st_folium(preview_map, width=700, height=400)
-    else:
-        st.info("先在「单点坐标转换」中执行转换，即可在地图上预览位置")
-
+                            if direction == "WGS-84 → GCJ-02":
+                                results = CoordinateConverter.convert_batch(coords, "wgs84_to_gcj02")
+                            else:
+                                results = CoordinateConverter.convert_batch(coords, "gcj02_to_wgs84")
+                            
+                            st.session_state.batch_result = {
+                                "input": coords,
+                                "output": results,
+                                "direction": direction
+                            }
+                        except Exception as e:
+                            st.error(f"批量转换失败: {e}")
+        
+        with col2:
+            st.markdown("#### 转换结果")
+            if st.session_state.get("batch_result"):
+                res = st.session_state.batch_result
+                st.success(f"**{res['direction']}** - 共 {len(res['input'])} 个点")
+                
+                result_data = []
+                for i, (in_coord, out_coord) in enumerate(zip(res['input'], res['output'])):
+                    delta_lng = out_coord[0] - in_coord[0]
+                    delta_lat = out_coord[1] - in_coord[1]
+                    delta_lng_m = delta_lng * 111000 * math.cos(math.radians(in_coord[1]))
+                    delta_lat_m = delta_lat * 111000
+                    
+                    result_data.append({
+                        "序号": i + 1,
+                        "输入经度": f"{in_coord[0]:.8f}",
+                        "输入纬度": f"{in_coord[1]:.8f}",
+                        "输出经度": f"{out_coord[0]:.8f}",
+                        "输出纬度": f"{out_coord[1]:.8f}",
+                        "Δ经度(米)": f"{delta_lng_m:.2f}",
+                        "Δ纬度(米)": f"{delta_lat_m:.2f}"
+                    })
+                
+                df = pd.DataFrame(result_data)
+                st.dataframe(df, use_container_width=True, height=300)
+                
+                csv = df.to_csv(index=False, encoding='utf-8-sig')
+                st.download_button(
+                    label="📥 导出CSV",
+                    data=csv,
+                    file_name=f"coordinate_conversion_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                    mime="text/csv",
+                    use_container_width=True
+                )
+            else:
+                st.info("点击「执行批量转换」查看结果")
 # ==================== 辅助UI函数 ====================
 def init_session_state():
     defaults = {
