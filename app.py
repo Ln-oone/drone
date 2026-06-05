@@ -1350,99 +1350,149 @@ def render_planning_page(drone_speed: int, flight_alt: float, auto_save: bool):
     with col2:
         render_planning_map_view(flight_alt, blocked)
 
+
 def render_planning_controls(flight_alt: float, drone_speed: int, auto_save: bool):
     st.subheader("🎮 控制面板")
+    
+    # 起点/终点设置
     with st.expander("📍 起点/终点设置", expanded=True):
         render_point_settings()
+    
+    # 路径规划策略
     with st.expander("🤖 路径规划策略", expanded=True):
         render_path_strategy(flight_alt)
+    
+    # 飞行控制（精简版，只保留核心按钮）
     with st.expander("✈️ 飞行控制", expanded=True):
         render_flight_controls(flight_alt, drone_speed)
 
-    st.markdown("### 📍 当前坐标")
+    # 当前坐标信息（包含规划路径总长）
+    st.markdown("---")
+    st.markdown("### 📍 当前坐标信息")
+    
     a, b = st.session_state.points_gcj['A'], st.session_state.points_gcj['B']
-    st.write(f"🟢 A点: ({a[0]:.6f}, {a[1]:.6f})")
-    st.write(f"🔴 B点: ({b[0]:.6f}, {b[1]:.6f})")
-    dist = math.hypot(b[0] - a[0], b[1] - a[1]) * 111000
-    st.caption(f"📏 直线距离: {dist:.0f} 米")
-    st.caption(f"🛡️ 当前安全半径: {st.session_state.safety_radius} 米")
+    
+    # 使用表格样式展示坐标信息
+    coord_data = {
+        "点位": ["🟢 起点 A", "🔴 终点 B"],
+        "经度": [f"{a[0]:.8f}", f"{b[0]:.8f}"],
+        "纬度": [f"{a[1]:.8f}", f"{b[1]:.8f}"]
+    }
+    st.dataframe(pd.DataFrame(coord_data), use_container_width=True, hide_index=True)
+    
+    # 距离信息
+    col_dist1, col_dist2 = st.columns(2)
+    with col_dist1:
+        straight_dist = math.hypot(b[0] - a[0], b[1] - a[1]) * 111000
+        st.metric("📏 直线距离", f"{straight_dist:.0f} 米", help="起点到终点的直线距离")
+    with col_dist2:
+        if st.session_state.planned_path:
+            planned_dist = calculate_path_length(st.session_state.planned_path) * 111000
+            st.metric("🛣️ 规划路径总长", f"{planned_dist:.0f} 米", 
+                     delta=f"{planned_dist - straight_dist:.0f} 米" if planned_dist > straight_dist else None,
+                     help="考虑避障后的实际飞行路径长度")
+        else:
+            st.metric("🛣️ 规划路径总长", "未规划", help="请先规划路径")
+    
+    # 安全信息
+    st.caption(f"🛡️ 当前安全半径: **{st.session_state.safety_radius} 米**")
+    if st.session_state.planned_path and len(st.session_state.planned_path) > 2:
+        st.caption(f"🎯 绕行航点数量: **{len(st.session_state.planned_path) - 2}** 个")
+
 
 def render_point_settings():
     st.markdown("#### 🎯 设置方式选择")
     mode = st.radio("选择设置方式", ["✏️ 经纬度输入", "🖱️ 鼠标点击设置"], horizontal=True, key="point_setting_mode")
+    
     if mode == "✏️ 经纬度输入":
         render_coordinate_input()
     else:
         render_mouse_click_setting()
 
-def render_coordinate_input():
-    st.markdown("#### 🟢 起点 A")
-    c1, c2 = st.columns(2)
-    with c1:
-        a_lat = st.number_input("纬度", value=st.session_state.points_gcj['A'][1], format="%.6f", key="a_lat", step=0.000001)
-    with c2:
-        a_lng = st.number_input("经度", value=st.session_state.points_gcj['A'][0], format="%.6f", key="a_lng", step=0.000001)
-    if st.button("📍 设置 A 点", use_container_width=True):
-        st.session_state.points_gcj['A'] = [a_lng, a_lat]
-        update_path_after_point_change()
-        st.success(f"✅ 起点已设置为 ({a_lng:.6f}, {a_lat:.6f})")
-        st.rerun()
 
-    st.markdown("#### 🔴 终点 B")
-    c1, c2 = st.columns(2)
-    with c1:
-        b_lat = st.number_input("纬度", value=st.session_state.points_gcj['B'][1], format="%.6f", key="b_lat", step=0.000001)
-    with c2:
-        b_lng = st.number_input("经度", value=st.session_state.points_gcj['B'][0], format="%.6f", key="b_lng", step=0.000001)
-    if st.button("📍 设置 B 点", use_container_width=True):
-        st.session_state.points_gcj['B'] = [b_lng, b_lat]
-        update_path_after_point_change()
-        st.success(f"✅ 终点已设置为 ({b_lng:.6f}, {b_lat:.6f})")
-        st.rerun()
+def render_coordinate_input():
+    # 起点设置
+    st.markdown("##### 🟢 起点 A")
+    col_a1, col_a2, col_a3 = st.columns([1, 1, 0.5])
+    with col_a1:
+        a_lat = st.number_input("纬度", value=st.session_state.points_gcj['A'][1], format="%.8f", 
+                                key="a_lat", step=0.000001, label_visibility="collapsed",
+                                placeholder="纬度")
+    with col_a2:
+        a_lng = st.number_input("经度", value=st.session_state.points_gcj['A'][0], format="%.8f", 
+                                key="a_lng", step=0.000001, label_visibility="collapsed",
+                                placeholder="经度")
+    with col_a3:
+        if st.button("📌", key="set_a", help="设置起点"):
+            st.session_state.points_gcj['A'] = [a_lng, a_lat]
+            update_path_after_point_change()
+            st.success(f"✅ 起点已设置")
+            st.rerun()
+    
+    # 终点设置
+    st.markdown("##### 🔴 终点 B")
+    col_b1, col_b2, col_b3 = st.columns([1, 1, 0.5])
+    with col_b1:
+        b_lat = st.number_input("纬度", value=st.session_state.points_gcj['B'][1], format="%.8f", 
+                                key="b_lat", step=0.000001, label_visibility="collapsed",
+                                placeholder="纬度")
+    with col_b2:
+        b_lng = st.number_input("经度", value=st.session_state.points_gcj['B'][0], format="%.8f", 
+                                key="b_lng", step=0.000001, label_visibility="collapsed",
+                                placeholder="经度")
+    with col_b3:
+        if st.button("📌", key="set_b", help="设置终点"):
+            st.session_state.points_gcj['B'] = [b_lng, b_lat]
+            update_path_after_point_change()
+            st.success(f"✅ 终点已设置")
+            st.rerun()
+    
+    # 快速重置按钮
+    col_reset1, col_reset2 = st.columns(2)
+    with col_reset1:
+        if st.button("🔄 重置起点", use_container_width=True, help="重置为默认起点"):
+            st.session_state.points_gcj['A'] = config.DEFAULT_A_GCJ.copy()
+            update_path_after_point_change()
+            st.success("✅ 起点已重置")
+            st.rerun()
+    with col_reset2:
+        if st.button("🔄 重置终点", use_container_width=True, help="重置为默认终点"):
+            st.session_state.points_gcj['B'] = config.DEFAULT_B_GCJ.copy()
+            update_path_after_point_change()
+            st.success("✅ 终点已重置")
+            st.rerun()
+
 
 def render_mouse_click_setting():
     st.info("💡 提示：点击地图上的任意位置来设置起点或终点")
-    c1, c2 = st.columns(2)
-    with c1:
-        if st.button("🎯 设置起点 (点击地图)", use_container_width=True, type="primary"):
+    
+    col_btn1, col_btn2, col_btn3 = st.columns(3)
+    with col_btn1:
+        if st.button("🎯 设置起点", use_container_width=True, type="primary"):
             st.session_state.waiting_for_start_point = True
             st.session_state.waiting_for_end_point = False
             st.info("👉 请在地图上点击选择起点位置")
             st.rerun()
-    with c2:
-        if st.button("📍 设置终点 (点击地图)", use_container_width=True, type="primary"):
+    
+    with col_btn2:
+        if st.button("📍 设置终点", use_container_width=True, type="primary"):
             st.session_state.waiting_for_end_point = True
             st.session_state.waiting_for_start_point = False
             st.info("👉 请在地图上点击选择终点位置")
             st.rerun()
-
+    
+    with col_btn3:
+        if st.button("❌ 取消", use_container_width=True):
+            st.session_state.waiting_for_start_point = False
+            st.session_state.waiting_for_end_point = False
+            st.rerun()
+    
+    # 状态指示
     if st.session_state.waiting_for_start_point:
         st.warning("⏳ 等待设置起点... 请点击地图")
     elif st.session_state.waiting_for_end_point:
         st.warning("⏳ 等待设置终点... 请点击地图")
 
-    if st.session_state.waiting_for_start_point or st.session_state.waiting_for_end_point:
-        if st.button("❌ 取消当前操作", use_container_width=True):
-            st.session_state.waiting_for_start_point = False
-            st.session_state.waiting_for_end_point = False
-            st.session_state.temp_click_point = None
-            st.rerun()
-
-    st.markdown("---")
-    st.markdown("#### 📍 快速设置")
-    c1, c2 = st.columns(2)
-    with c1:
-        if st.button("🔄 重置到默认起点", use_container_width=True):
-            st.session_state.points_gcj['A'] = config.DEFAULT_A_GCJ.copy()
-            update_path_after_point_change()
-            st.success("✅ 起点已重置为默认值")
-            st.rerun()
-    with c2:
-        if st.button("🔄 重置到默认终点", use_container_width=True):
-            st.session_state.points_gcj['B'] = config.DEFAULT_B_GCJ.copy()
-            update_path_after_point_change()
-            st.success("✅ 终点已重置为默认值")
-            st.rerun()
 
 def update_path_after_point_change():
     st.session_state.planned_path = create_avoidance_path(
@@ -1450,97 +1500,132 @@ def update_path_after_point_change():
         st.session_state.obstacles_gcj, st.session_state.last_flight_altitude,
         st.session_state.current_direction, st.session_state.safety_radius)
 
+
 def render_path_strategy(flight_alt: float):
-    st.markdown("**选择绕行方向：**")
-    c1, c2, c3 = st.columns(3)
-    with c1:
+    st.markdown("#### 🧭 绕行策略选择")
+    
+    # 策略按钮行
+    col1, col2, col3 = st.columns(3)
+    with col1:
         if st.button("🔄 最佳航线", use_container_width=True,
                      type="primary" if st.session_state.current_direction == "最佳航线" else "secondary"):
             st.session_state.current_direction = "最佳航线"
             st.session_state.planned_path = create_avoidance_path(
                 st.session_state.points_gcj['A'], st.session_state.points_gcj['B'],
                 st.session_state.obstacles_gcj, flight_alt, "最佳航线", st.session_state.safety_radius)
-            st.success("已切换到最佳航线模式")
+            st.success("✅ 已切换到最佳航线模式")
             st.rerun()
-    with c2:
+    
+    with col2:
         if st.button("⬅️ 向左绕行", use_container_width=True,
                      type="primary" if st.session_state.current_direction == "向左绕行" else "secondary"):
             st.session_state.current_direction = "向左绕行"
             st.session_state.planned_path = create_avoidance_path(
                 st.session_state.points_gcj['A'], st.session_state.points_gcj['B'],
                 st.session_state.obstacles_gcj, flight_alt, "向左绕行", st.session_state.safety_radius)
-            st.success("已切换到向左绕行模式")
+            st.success("✅ 已切换到向左绕行模式")
             st.rerun()
-    with c3:
+    
+    with col3:
         if st.button("➡️ 向右绕行", use_container_width=True,
                      type="primary" if st.session_state.current_direction == "向右绕行" else "secondary"):
             st.session_state.current_direction = "向右绕行"
             st.session_state.planned_path = create_avoidance_path(
                 st.session_state.points_gcj['A'], st.session_state.points_gcj['B'],
                 st.session_state.obstacles_gcj, flight_alt, "向右绕行", st.session_state.safety_radius)
-            st.success("已切换到向右绕行模式")
+            st.success("✅ 已切换到向右绕行模式")
             st.rerun()
+    
+    # 当前策略状态
+    col_status1, col_status2 = st.columns(2)
+    with col_status1:
+        st.info(f"📌 当前策略: **{st.session_state.current_direction}**")
+    with col_status2:
+        st.info(f"🛡️ 安全半径: **{st.session_state.safety_radius} 米**")
+    
+    # 重新规划按钮
+    if st.button("🔄 重新规划路径", use_container_width=True, type="primary"):
+        with st.spinner("正在规划路径..."):
+            st.session_state.planned_path = create_avoidance_path(
+                st.session_state.points_gcj['A'], st.session_state.points_gcj['B'],
+                st.session_state.obstacles_gcj, flight_alt,
+                st.session_state.current_direction, st.session_state.safety_radius)
+            if st.session_state.planned_path:
+                st.success(f"✅ 已按照「{st.session_state.current_direction}」规划路径，{len(st.session_state.planned_path)-2}个绕行点")
+                st.rerun()
 
-    st.info(f"📌 当前绕行策略: **{st.session_state.current_direction}**")
-    st.info(f"🛡️ 当前安全半径: **{st.session_state.safety_radius} 米**")
-
-    if st.button("🔄 重新规划路径", use_container_width=True):
-        st.session_state.planned_path = create_avoidance_path(
-            st.session_state.points_gcj['A'], st.session_state.points_gcj['B'],
-            st.session_state.obstacles_gcj, flight_alt,
-            st.session_state.current_direction, st.session_state.safety_radius)
-        if st.session_state.planned_path:
-            st.success(f"已按照「{st.session_state.current_direction}」规划路径，{len(st.session_state.planned_path)-2}个绕行点")
-            st.rerun()
 
 def render_flight_controls(flight_alt: float, drone_speed: int):
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        st.metric("当前飞行高度", f"{flight_alt} m")
-    with c2:
-        st.metric("速度系数", f"{drone_speed}%")
-    with c3:
-        st.metric("🛡️ 安全半径", f"{st.session_state.safety_radius} 米")
-
-    if st.session_state.planned_path:
-        st.metric("🎯 绕行点数量", len(st.session_state.planned_path) - 2)
-        total_dist = calculate_path_length(st.session_state.planned_path) * 111000
-        st.caption(f"📏 规划路径总长: {total_dist:.0f} 米")
-
-    c_btn1, c_btn2 = st.columns(2)
-    with c_btn1:
+    """精简版飞行控制，只保留核心控制按钮"""
+    
+    # 飞行参数摘要
+    st.markdown("#### ⚙️ 飞行参数")
+    col_p1, col_p2 = st.columns(2)
+    with col_p1:
+        st.metric("✈️ 飞行高度", f"{flight_alt} m", help="当前设置的飞行高度")
+    with col_p2:
+        st.metric("⚡ 速度系数", f"{drone_speed}%", help="飞行速度百分比")
+    
+    st.markdown("---")
+    
+    # 控制按钮
+    st.markdown("#### 🎮 飞行指令")
+    col_btn1, col_btn2 = st.columns(2)
+    
+    with col_btn1:
         if st.button("▶️ 开始飞行", use_container_width=True, type="primary"):
             if st.session_state.points_gcj['A'] and st.session_state.points_gcj['B']:
                 path = st.session_state.planned_path or [st.session_state.points_gcj['A'], st.session_state.points_gcj['B']]
-                comm = st.session_state.comm_sim
-                total = calculate_path_length(path) * 111000
-                comm.add_planning_record({"message": "开始航线规划", "details": f"算法: A* | 障碍物数量: {len(st.session_state.obstacles_gcj)}"})
-                comm.add_planning_record({"message": "航线规划完成", "details": f"类型: horizontal | 航点数: {len(path)} | 路径长度: {total:.1f}m"})
-                comm.add_planning_record({"message": "导航目标", "details": f"起点: {st.session_state.points_gcj['A']} | 终点: {st.session_state.points_gcj['B']} | 目标高度: {flight_alt}m"})
-                comm.send_message("GCS", "OBC", "START_MISSION", f"起点: {st.session_state.points_gcj['A']}, 终点: {st.session_state.points_gcj['B']}")
-                comm.send_message("OBC", "FCU", "UPLOAD_MISSION", f"航点数量: {len(path)}")
-                st.session_state.heartbeat_sim.set_path(path, flight_alt, drone_speed, st.session_state.safety_radius)
-                st.session_state.simulation_running = True
-                st.session_state.flight_history = []
-                comm.send_message("FCU", "OBC", "ACK", "Mode: AUTO")
-                comm.send_message("OBC", "GCS", "ACK", "任务已开始")
-                st.success(f"🚁 飞行已开始！{'路径中有' + str(len(path)-2) + '个绕行点' if len(path)>2 else '直线飞行'}")
-                st.rerun()
+                if path:
+                    comm = st.session_state.comm_sim
+                    total = calculate_path_length(path) * 111000
+                    
+                    comm.add_planning_record({"message": "开始航线规划", "details": f"算法: A* | 障碍物数量: {len(st.session_state.obstacles_gcj)}"})
+                    comm.add_planning_record({"message": "航线规划完成", "details": f"类型: horizontal | 航点数: {len(path)} | 路径长度: {total:.1f}m"})
+                    comm.add_planning_record({"message": "导航目标", "details": f"起点: {st.session_state.points_gcj['A']} | 终点: {st.session_state.points_gcj['B']} | 目标高度: {flight_alt}m"})
+                    
+                    comm.send_message("GCS", "OBC", "START_MISSION", f"起点: {st.session_state.points_gcj['A']}, 终点: {st.session_state.points_gcj['B']}")
+                    comm.send_message("OBC", "FCU", "UPLOAD_MISSION", f"航点数量: {len(path)}")
+                    
+                    st.session_state.heartbeat_sim.set_path(path, flight_alt, drone_speed, st.session_state.safety_radius)
+                    st.session_state.simulation_running = True
+                    st.session_state.flight_history = []
+                    
+                    comm.send_message("FCU", "OBC", "ACK", "Mode: AUTO")
+                    comm.send_message("OBC", "GCS", "ACK", "任务已开始")
+                    
+                    st.success(f"🚁 飞行已开始！{'路径中有' + str(len(path)-2) + '个绕行点' if len(path)>2 else '直线飞行'}")
+                    st.rerun()
             else:
-                st.error("请先设置起点和终点")
-    with c_btn2:
+                st.error("❌ 请先设置起点和终点")
+    
+    with col_btn2:
         if st.button("⏹️ 停止飞行", use_container_width=True):
             st.session_state.simulation_running = False
             st.session_state.heartbeat_sim.simulating = False
             st.session_state.comm_sim.send_message("GCS", "OBC", "STOP_MISSION", "用户停止飞行")
-            st.info("飞行已停止")
+            st.info("⏸️ 飞行已停止")
+
 
 def render_planning_map_view(flight_alt: float, straight_blocked: bool):
     st.subheader("🗺️ 规划地图")
+    
+    # 图例说明
+    col_legend1, col_legend2, col_legend3, col_legend4, col_legend5 = st.columns(5)
+    with col_legend1:
+        st.markdown("🟢 **起点**")
+    with col_legend2:
+        st.markdown("🔴 **终点**")
+    with col_legend3:
+        st.markdown("🟢 **最佳航线**")
+    with col_legend4:
+        st.markdown("🟣 **向左绕行**")
+    with col_legend5:
+        st.markdown("🟠 **向右绕行**")
+    
     if straight_blocked:
-        st.caption(f"当前避障策略: {st.session_state.current_direction}")
-        st.caption("🟢 绿色=最佳航线 | 🟣 紫色=向左绕行 | 🟠 橙色=向右绕行 | 🔵 蓝色圆圈=安全半径")
-        st.caption("💡 提示：在鼠标点击设置模式下，直接点击地图即可设置起点或终点")
+        st.caption(f"⚠️ 当前避障策略: **{st.session_state.current_direction}**")
+    st.caption("💡 提示：在鼠标点击设置模式下，直接点击地图即可设置起点或终点")
 
     flight_trail = [[hb.lng, hb.lat] for hb in st.session_state.heartbeat_sim.history[:20]]
     center = st.session_state.points_gcj['A'] or config.SCHOOL_CENTER_GCJ
@@ -1558,78 +1643,6 @@ def render_planning_map_view(flight_alt: float, straight_blocked: bool):
     output = st_folium(m, width=700, height=550, returned_objects=["last_active_drawing", "last_clicked"])
     handle_map_click(output)
     handle_drawing_output(output)
-
-def handle_map_click(output):
-    if output and output.get("last_clicked"):
-        clicked = output["last_clicked"]
-        if clicked and isinstance(clicked, dict):
-            lng = clicked.get("lng")
-            lat = clicked.get("lat")
-            if lng is not None and lat is not None:
-                if st.session_state.waiting_for_start_point:
-                    st.session_state.points_gcj['A'] = [lng, lat]
-                    update_path_after_point_change()
-                    st.session_state.waiting_for_start_point = False
-                    st.success(f"✅ 起点已设置: ({lng:.6f}, {lat:.6f})")
-                    st.rerun()
-                elif st.session_state.waiting_for_end_point:
-                    st.session_state.points_gcj['B'] = [lng, lat]
-                    update_path_after_point_change()
-                    st.session_state.waiting_for_end_point = False
-                    st.success(f"✅ 终点已设置: ({lng:.6f}, {lat:.6f})")
-                    st.rerun()
-
-def handle_drawing_output(output):
-    if output and output.get("last_active_drawing"):
-        last = output["last_active_drawing"]
-        if last and last.get("geometry") and last["geometry"].get("type") == "Polygon":
-            coords = last["geometry"].get("coordinates", [])
-            if coords and len(coords) > 0:
-                poly = [[p[0], p[1]] for p in coords[0]]
-                if len(poly) >= 3 and st.session_state.pending_obstacle is None:
-                    if validate_polygon(poly):
-                        st.session_state.pending_obstacle = poly
-                        st.rerun()
-
-    if st.session_state.pending_obstacle is not None:
-        render_obstacle_dialog()
-
-def render_obstacle_dialog():
-    st.markdown("---")
-    st.subheader("📝 添加新障碍物")
-    st.info(f"已检测到新绘制的多边形，共 {len(st.session_state.pending_obstacle)} 个顶点")
-    c1, c2 = st.columns(2)
-    with c1:
-        new_name = st.text_input("障碍物名称", f"建筑物{len(st.session_state.obstacles_gcj) + 1}")
-    with c2:
-        new_height = st.number_input("障碍物高度 (米)", 1, 200, 30, 5, key="height_input")
-
-    c_ok, c_cancel = st.columns(2)
-    with c_ok:
-        if st.button("✅ 确认添加", use_container_width=True, type="primary"):
-            new_obstacle = {
-                "name": new_name,
-                "polygon": st.session_state.pending_obstacle,
-                "height": new_height,
-                "selected": False,
-                "id": f"obs_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{len(st.session_state.obstacles_gcj)}",
-                "created_time": datetime.now().isoformat()
-            }
-            st.session_state.obstacles_gcj.append(new_obstacle)
-            if st.session_state.auto_backup:
-                save_obstacles(st.session_state.obstacles_gcj)
-            st.session_state.planned_path = create_avoidance_path(
-                st.session_state.points_gcj['A'], st.session_state.points_gcj['B'],
-                st.session_state.obstacles_gcj, st.session_state.last_flight_altitude,
-                st.session_state.current_direction, st.session_state.safety_radius)
-            st.session_state.pending_obstacle = None
-            st.success(f"✅ 已添加 {new_name}，高度 {new_height} 米")
-            st.rerun()
-    with c_cancel:
-        if st.button("❌ 取消", use_container_width=True):
-            st.session_state.pending_obstacle = None
-            st.rerun()
-
 # ==================== 飞行监控页面 ====================
 def render_flight_monitoring_page(flight_alt: float, drone_speed: int):
     st.header("📡 飞行监控 - 实时心跳包")
