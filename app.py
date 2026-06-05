@@ -2614,8 +2614,6 @@ def main():
         render_communication_page()
     elif page == "🚧 障碍物管理":
         render_obstacle_management_page(flight_alt)
-    elif page == "🔄 坐标转换":
-        render_coordinate_conversion_page()
 
 if __name__ == "__main__":
     main()
