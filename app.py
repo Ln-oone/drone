@@ -1335,17 +1335,39 @@ def render_communication_page():
                 st.success("✅ 日志已清空")
                 st.rerun()
 # ==================== 页面渲染函数 ====================
+# ==================== 航线规划页面（整合坐标转换）====================
 def render_planning_page(drone_speed: int, flight_alt: float, auto_save: bool):
-    st.header("🗺️ 航线规划 - 智能避障")
+    """航线规划主页面 - 整合坐标转换功能"""
+    st.header("🗺️ 航线规划")
+    
+    # 创建标签页
+    tab1, tab2 = st.tabs(["✈️ 航线规划", "🔄 坐标转换工具"])
+    
+    with tab1:
+        render_planning_tab(drone_speed, flight_alt, auto_save)
+    
+    with tab2:
+        render_coordinate_conversion_tab()
+
+
+def render_planning_tab(drone_speed: int, flight_alt: float, auto_save: bool):
+    """航线规划标签页"""
     
     # 状态提示
     blocked, high = check_straight_blocked(st.session_state.points_gcj, st.session_state.obstacles_gcj, flight_alt)
-    if blocked:
-        st.warning(f"⚠️ 有 {high} 个障碍物高于飞行高度({flight_alt}m)，需要绕行")
-    else:
-        st.success("✅ 直线航线畅通无阻（所有障碍物高度 ≤ 飞行高度）")
+    
+    status_cols = st.columns([2, 1])
+    with status_cols[0]:
+        if blocked:
+            st.warning(f"⚠️ 有 {high} 个障碍物高于飞行高度({flight_alt}m)，需要绕行")
+        else:
+            st.success("✅ 直线航线畅通无阻")
+    
+    with status_cols[1]:
+        st.info(f"🛡️ 安全半径: {st.session_state.safety_radius}m")
+    
     st.info("📝 点击地图左上角📐图标 → 选择多边形 → 围绕建筑物绘制 → 双击完成 → 输入高度并保存")
-
+    
     # 左右布局
     col1, col2 = st.columns([1, 1.5])
     with col1:
@@ -1365,19 +1387,17 @@ def render_planning_controls(flight_alt: float, drone_speed: int, auto_save: boo
     with st.expander("🤖 路径规划策略", expanded=True):
         render_path_strategy(flight_alt)
     
-    # 飞行控制按钮（简化版）
+    # 飞行控制
     st.subheader("✈️ 飞行控制")
     
-    # 关键参数显示（紧凑布局）
     param_cols = st.columns(3)
     with param_cols[0]:
-        st.info(f"**高度**: {flight_alt}m")
+        st.metric("飞行高度", f"{flight_alt} m")
     with param_cols[1]:
-        st.info(f"**速度系数**: {drone_speed}%")
+        st.metric("速度系数", f"{drone_speed}%")
     with param_cols[2]:
-        st.info(f"**安全半径**: {st.session_state.safety_radius}m")
+        st.metric("安全半径", f"{st.session_state.safety_radius} m")
     
-    # 飞行按钮
     btn_col1, btn_col2 = st.columns(2)
     with btn_col1:
         if st.button("▶️ 开始飞行", use_container_width=True, type="primary"):
@@ -1387,11 +1407,62 @@ def render_planning_controls(flight_alt: float, drone_speed: int, auto_save: boo
             stop_flight()
     
     st.markdown("---")
+    
+    # 当前坐标信息
+    render_current_coords_info()
+
+
+def render_current_coords_info():
+    """显示当前坐标信息"""
+    st.subheader("📍 当前坐标信息")
+    
+    a, b = st.session_state.points_gcj['A'], st.session_state.points_gcj['B']
+    
+    coord_cols = st.columns(2)
+    with coord_cols[0]:
+        st.markdown(f"""
+        <div style="background: #f0f9f0; border-radius: 10px; padding: 10px; border-left: 4px solid #4CAF50;">
+            <span style="font-size: 12px; color: #666;">🟢 起点 A</span><br>
+            <code style="font-size: 12px;">经度: {a[0]:.8f}</code><br>
+            <code style="font-size: 12px;">纬度: {a[1]:.8f}</code>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with coord_cols[1]:
+        st.markdown(f"""
+        <div style="background: #fff0f0; border-radius: 10px; padding: 10px; border-left: 4px solid #f44336;">
+            <span style="font-size: 12px; color: #666;">🔴 终点 B</span><br>
+            <code style="font-size: 12px;">经度: {b[0]:.8f}</code><br>
+            <code style="font-size: 12px;">纬度: {b[1]:.8f}</code>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    # 距离信息
+    dist = math.hypot(b[0] - a[0], b[1] - a[1]) * 111000
+    
+    info_cols = st.columns(2)
+    with info_cols[0]:
+        st.metric("📏 直线距离", f"{dist:.0f} 米")
+    
+    with info_cols[1]:
+        if st.session_state.planned_path:
+            total_dist = calculate_path_length(st.session_state.planned_path) * 111000
+            delta_dist = total_dist - dist
+            st.metric("🛣️ 规划路径总长", f"{total_dist:.0f} 米", 
+                     delta=f"+{delta_dist:.0f}m" if delta_dist > 0 else None)
+        else:
+            st.metric("🛣️ 规划路径总长", "未规划")
+    
+    # 绕行点信息
+    if st.session_state.planned_path and len(st.session_state.planned_path) > 2:
+        waypoint_count = len(st.session_state.planned_path) - 2
+        st.caption(f"🎯 包含 {waypoint_count} 个绕行航点")
+
 
 def render_point_settings():
     """起点/终点设置"""
-    st.markdown("#### 🎯 设置方式选择")
-    mode = st.radio("选择设置方式", ["✏️ 经纬度输入", "🖱️ 鼠标点击设置"], 
+    st.markdown("#### 🎯 设置方式")
+    mode = st.radio("选择方式", ["✏️ 经纬度输入", "🖱️ 鼠标点击"], 
                     horizontal=True, key="point_setting_mode", label_visibility="collapsed")
     
     if mode == "✏️ 经纬度输入":
@@ -1407,12 +1478,12 @@ def render_coordinate_input():
     col_a1, col_a2, col_a3 = st.columns([1, 1, 1])
     with col_a1:
         a_lat = st.number_input("纬度", value=st.session_state.points_gcj['A'][1], 
-                                format="%.6f", key="a_lat", step=0.000001, label_visibility="collapsed",
-                                placeholder="纬度")
+                                format="%.6f", key="a_lat", step=0.000001, 
+                                label_visibility="collapsed", placeholder="纬度")
     with col_a2:
         a_lng = st.number_input("经度", value=st.session_state.points_gcj['A'][0], 
-                                format="%.6f", key="a_lng", step=0.000001, label_visibility="collapsed",
-                                placeholder="经度")
+                                format="%.6f", key="a_lng", step=0.000001, 
+                                label_visibility="collapsed", placeholder="经度")
     with col_a3:
         if st.button("📍 设置A点", use_container_width=True, key="set_a"):
             st.session_state.points_gcj['A'] = [a_lng, a_lat]
@@ -1425,12 +1496,12 @@ def render_coordinate_input():
     col_b1, col_b2, col_b3 = st.columns([1, 1, 1])
     with col_b1:
         b_lat = st.number_input("纬度", value=st.session_state.points_gcj['B'][1], 
-                                format="%.6f", key="b_lat", step=0.000001, label_visibility="collapsed",
-                                placeholder="纬度")
+                                format="%.6f", key="b_lat", step=0.000001, 
+                                label_visibility="collapsed", placeholder="纬度")
     with col_b2:
         b_lng = st.number_input("经度", value=st.session_state.points_gcj['B'][0], 
-                                format="%.6f", key="b_lng", step=0.000001, label_visibility="collapsed",
-                                placeholder="经度")
+                                format="%.6f", key="b_lng", step=0.000001, 
+                                label_visibility="collapsed", placeholder="经度")
     with col_b3:
         if st.button("📍 设置B点", use_container_width=True, key="set_b"):
             st.session_state.points_gcj['B'] = [b_lng, b_lat]
@@ -1438,7 +1509,7 @@ def render_coordinate_input():
             st.success("✅ 终点已更新")
             st.rerun()
     
-    # 快速重置按钮
+    # 快速重置
     col_r1, col_r2 = st.columns(2)
     with col_r1:
         if st.button("🔄 重置默认起点", use_container_width=True):
@@ -1454,7 +1525,7 @@ def render_coordinate_input():
 
 def render_mouse_click_setting():
     """鼠标点击设置"""
-    st.info("💡 点击地图上的任意位置来设置起点或终点")
+    st.info("💡 点击地图上的任意位置设置起点或终点")
     
     col1, col2 = st.columns(2)
     with col1:
@@ -1490,9 +1561,8 @@ def update_path_after_point_change():
 
 def render_path_strategy(flight_alt: float):
     """路径规划策略"""
-    st.markdown("**绕行方向选择**")
+    st.markdown("**绕行方向**")
     
-    # 三选一按钮
     col1, col2, col3 = st.columns(3)
     
     with col1:
@@ -1531,9 +1601,19 @@ def render_path_strategy(flight_alt: float):
             st.success("✅ 已切换到向右绕行")
             st.rerun()
     
-    # 当前策略显示
     st.info(f"📌 当前策略: **{st.session_state.current_direction}**")
     
+    if st.button("🔄 重新规划路径", use_container_width=True):
+        with st.spinner("规划中..."):
+            st.session_state.planned_path = create_avoidance_path(
+                st.session_state.points_gcj['A'], st.session_state.points_gcj['B'],
+                st.session_state.obstacles_gcj, flight_alt,
+                st.session_state.current_direction, st.session_state.safety_radius)
+        if st.session_state.planned_path:
+            st.success("✅ 路径已重新规划")
+            st.rerun()
+
+
 def start_flight(flight_alt: float, drone_speed: int):
     """开始飞行"""
     if not st.session_state.points_gcj['A'] or not st.session_state.points_gcj['B']:
@@ -1544,16 +1624,13 @@ def start_flight(flight_alt: float, drone_speed: int):
     comm = st.session_state.comm_sim
     total = calculate_path_length(path) * 111000
     
-    # 添加规划记录
     comm.add_planning_record({"message": "开始航线规划", "details": f"障碍物数量: {len(st.session_state.obstacles_gcj)}"})
     comm.add_planning_record({"message": "航线规划完成", "details": f"航点数: {len(path)} | 路径长度: {total:.1f}m"})
     comm.add_planning_record({"message": "导航目标", "details": f"起点→终点 | 目标高度: {flight_alt}m"})
     
-    # 发送指令
     comm.send_message("GCS", "OBC", "START_MISSION")
     comm.send_message("OBC", "FCU", "UPLOAD_MISSION", f"航点数量: {len(path)}")
     
-    # 启动模拟
     st.session_state.heartbeat_sim.set_path(path, flight_alt, drone_speed, st.session_state.safety_radius)
     st.session_state.simulation_running = True
     st.session_state.flight_history = []
@@ -1579,16 +1656,13 @@ def render_planning_map_view(flight_alt: float, straight_blocked: bool):
     """规划地图视图"""
     st.subheader("🗺️ 规划地图")
     
-    # 提示信息
     if straight_blocked:
         st.caption(f"🎯 当前避障策略: {st.session_state.current_direction}")
         st.caption("🟢 绿色=最佳航线 | 🟣 紫色=向左绕行 | 🟠 橙色=向右绕行 | 🔵 蓝色=安全半径")
     
-    # 飞行轨迹
     flight_trail = [[hb.lng, hb.lat] for hb in st.session_state.heartbeat_sim.history[:20]]
     center = st.session_state.points_gcj['A'] or config.SCHOOL_CENTER_GCJ
     
-    # 规划路径
     if st.session_state.planned_path is None:
         st.session_state.planned_path = create_avoidance_path(
             st.session_state.points_gcj['A'], st.session_state.points_gcj['B'],
@@ -1597,7 +1671,6 @@ def render_planning_map_view(flight_alt: float, straight_blocked: bool):
     
     drone_pos = st.session_state.heartbeat_sim.current_pos if st.session_state.heartbeat_sim.simulating else None
     
-    # 创建地图
     m = create_planning_map(center, st.session_state.points_gcj, st.session_state.obstacles_gcj,
                             flight_trail, st.session_state.planned_path, straight_blocked,
                             flight_alt, drone_pos, st.session_state.current_direction, 
@@ -1684,7 +1757,185 @@ def render_obstacle_dialog():
         if st.button("❌ 取消", use_container_width=True):
             st.session_state.pending_obstacle = None
             st.rerun()
+
+
+# ==================== 坐标转换工具标签页 ====================
+def render_coordinate_conversion_tab():
+    """坐标转换工具标签页"""
+    st.subheader("🔄 WGS-84 ↔ GCJ-02 坐标转换")
+    st.caption("WGS-84 (GPS) ↔ GCJ-02 (高德/腾讯/谷歌中国)")
+    
+    # 转换类型选择
+    convert_type = st.radio("转换模式", ["📍 单点转换", "📊 批量转换"], 
+                            horizontal=True, key="conv_type")
+    
+    st.markdown("---")
+    
+    if convert_type == "📍 单点转换":
+        render_single_point_conversion()
+    else:
+        render_batch_conversion()
+
+
+def render_single_point_conversion():
+    """单点转换"""
+    col1, col2 = st.columns([1, 1])
+    
+    with col1:
+        st.markdown("#### 📥 输入坐标")
+        direction = st.radio("方向", ["WGS-84 → GCJ-02", "GCJ-02 → WGS-84"], 
+                             horizontal=True, key="single_direction")
+        
+        lng = st.number_input("经度", value=118.748726, format="%.6f", key="single_lng")
+        lat = st.number_input("纬度", value=32.233881, format="%.6f", key="single_lat")
+        
+        if st.button("🔄 执行转换", type="primary", use_container_width=True):
+            try:
+                if direction == "WGS-84 → GCJ-02":
+                    out_lng, out_lat = CoordinateConverter.wgs84_to_gcj02(lng, lat)
+                    st.session_state.conv_result = {
+                        "input": (lng, lat), "output": (out_lng, out_lat),
+                        "direction": "WGS-84 → GCJ-02"
+                    }
+                else:
+                    out_lng, out_lat = CoordinateConverter.gcj02_to_wgs84(lng, lat)
+                    st.session_state.conv_result = {
+                        "input": (lng, lat), "output": (out_lng, out_lat),
+                        "direction": "GCJ-02 → WGS-84"
+                    }
+            except Exception as e:
+                st.error(f"转换失败: {e}")
+    
+    with col2:
+        st.markdown("#### 📤 转换结果")
+        if st.session_state.get("conv_result"):
+            res = st.session_state.conv_result
+            st.success(f"**{res['direction']}**")
             
+            delta_lng = res['output'][0] - res['input'][0]
+            delta_lat = res['output'][1] - res['input'][1]
+            delta_lng_m = delta_lng * 111000 * math.cos(math.radians(res['input'][1]))
+            delta_lat_m = delta_lat * 111000
+            
+            st.markdown(f"""
+            | 项目 | 经度 | 纬度 |
+            |------|------|------|
+            | 输入 | `{res['input'][0]:.8f}` | `{res['input'][1]:.8f}` |
+            | 输出 | `{res['output'][0]:.8f}` | `{res['output'][1]:.8f}` |
+            | 偏移 | {delta_lng_m:.2f}米 | {delta_lat_m:.2f}米 |
+            """)
+            
+            # 快速应用到起点/终点
+            st.markdown("---")
+            st.markdown("#### 🎯 应用到航线")
+            col_apply1, col_apply2 = st.columns(2)
+            with col_apply1:
+                if st.button("📌 设为起点", use_container_width=True):
+                    st.session_state.points_gcj['A'] = [res['output'][0], res['output'][1]]
+                    update_path_after_point_change()
+                    st.success("✅ 已设为起点")
+                    st.rerun()
+            with col_apply2:
+                if st.button("📍 设为终点", use_container_width=True):
+                    st.session_state.points_gcj['B'] = [res['output'][0], res['output'][1]]
+                    update_path_after_point_change()
+                    st.success("✅ 已设为终点")
+                    st.rerun()
+        else:
+            st.info("点击「执行转换」查看结果")
+
+
+def render_batch_conversion():
+    """批量转换"""
+    st.markdown("#### 📥 输入坐标")
+    st.caption("每行格式：经度,纬度")
+    
+    col1, col2 = st.columns([1, 1])
+    
+    with col1:
+        direction = st.radio("方向", ["WGS-84 → GCJ-02", "GCJ-02 → WGS-84"], 
+                             horizontal=True, key="batch_direction")
+        
+        batch_input = st.text_area(
+            "坐标列表",
+            height=250,
+            placeholder="118.748726,32.233881\n118.750110,32.235460\n118.749000,32.234000",
+            key="batch_input"
+        )
+        
+        if st.button("📊 执行批量转换", type="primary", use_container_width=True):
+            if batch_input.strip():
+                lines = batch_input.strip().split('\n')
+                coords = []
+                invalid_lines = []
+                
+                for i, line in enumerate(lines, 1):
+                    line = line.strip()
+                    if not line:
+                        continue
+                    parts = line.split(',')
+                    if len(parts) >= 2:
+                        try:
+                            lng = float(parts[0].strip())
+                            lat = float(parts[1].strip())
+                            coords.append((lng, lat))
+                        except ValueError:
+                            invalid_lines.append(i)
+                    else:
+                        invalid_lines.append(i)
+                
+                if invalid_lines:
+                    st.warning(f"跳过无效行: 第{', '.join(map(str, invalid_lines))}行")
+                
+                if coords:
+                    try:
+                        if direction == "WGS-84 → GCJ-02":
+                            results = CoordinateConverter.convert_batch(coords, "wgs84_to_gcj02")
+                        else:
+                            results = CoordinateConverter.convert_batch(coords, "gcj02_to_wgs84")
+                        
+                        st.session_state.batch_result = {
+                            "input": coords, "output": results, "direction": direction
+                        }
+                    except Exception as e:
+                        st.error(f"批量转换失败: {e}")
+    
+    with col2:
+        st.markdown("#### 📤 转换结果")
+        if st.session_state.get("batch_result"):
+            res = st.session_state.batch_result
+            st.success(f"**{res['direction']}** - 共 {len(res['input'])} 个点")
+            
+            result_data = []
+            for i, (in_coord, out_coord) in enumerate(zip(res['input'], res['output'])):
+                delta_lng = out_coord[0] - in_coord[0]
+                delta_lat = out_coord[1] - in_coord[1]
+                delta_lng_m = delta_lng * 111000 * math.cos(math.radians(in_coord[1]))
+                delta_lat_m = delta_lat * 111000
+                
+                result_data.append({
+                    "序号": i + 1,
+                    "输入经度": f"{in_coord[0]:.8f}",
+                    "输入纬度": f"{in_coord[1]:.8f}",
+                    "输出经度": f"{out_coord[0]:.8f}",
+                    "输出纬度": f"{out_coord[1]:.8f}",
+                    "Δ经度(米)": f"{delta_lng_m:.2f}",
+                    "Δ纬度(米)": f"{delta_lat_m:.2f}"
+                })
+            
+            df = pd.DataFrame(result_data)
+            st.dataframe(df, use_container_width=True, height=250)
+            
+            csv = df.to_csv(index=False, encoding='utf-8-sig')
+            st.download_button(
+                label="📥 导出CSV",
+                data=csv,
+                file_name=f"coordinate_conversion_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                mime="text/csv",
+                use_container_width=True
+            )
+        else:
+            st.info("点击「执行批量转换」查看结果")
 # ==================== 飞行监控页面 ====================
 def render_flight_monitoring_page(flight_alt: float, drone_speed: int):
     st.header("📡 飞行监控 - 实时心跳包")
