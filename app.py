@@ -1387,54 +1387,6 @@ def render_planning_controls(flight_alt: float, drone_speed: int, auto_save: boo
             stop_flight()
     
     st.markdown("---")
-    
-    # 当前坐标信息（整合规划路径总长）
-    st.subheader("📍 当前坐标信息")
-    
-    a, b = st.session_state.points_gcj['A'], st.session_state.points_gcj['B']
-    
-    # 使用网格布局显示坐标
-    coord_cols = st.columns(2)
-    with coord_cols[0]:
-        st.markdown(f"""
-        <div style="background: #f0f9f0; border-radius: 10px; padding: 10px; border-left: 4px solid #4CAF50;">
-            <span style="font-size: 12px; color: #666;">🟢 起点 A</span><br>
-            <code style="font-size: 13px;">经度: {a[0]:.8f}</code><br>
-            <code style="font-size: 13px;">纬度: {a[1]:.8f}</code>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with coord_cols[1]:
-        st.markdown(f"""
-        <div style="background: #fff0f0; border-radius: 10px; padding: 10px; border-left: 4px solid #f44336;">
-            <span style="font-size: 12px; color: #666;">🔴 终点 B</span><br>
-            <code style="font-size: 13px;">经度: {b[0]:.8f}</code><br>
-            <code style="font-size: 13px;">纬度: {b[1]:.8f}</code>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    # 距离和路径信息
-    dist = math.hypot(b[0] - a[0], b[1] - a[1]) * 111000
-    
-    info_cols = st.columns(2)
-    with info_cols[0]:
-        st.metric("📏 直线距离", f"{dist:.0f} 米")
-    with info_cols[1]:
-        if st.session_state.planned_path:
-            total_dist = calculate_path_length(st.session_state.planned_path) * 111000
-            st.metric("🛣️ 规划路径总长", f"{total_dist:.0f} 米", 
-                     delta=f"绕行 {total_dist - dist:.0f}m" if total_dist > dist else None)
-        else:
-            st.metric("🛣️ 规划路径总长", "未规划")
-    
-    # 安全信息
-    st.caption(f"🛡️ 当前安全半径: {st.session_state.safety_radius} 米")
-    
-    # 绕行点信息（如果有）
-    if st.session_state.planned_path and len(st.session_state.planned_path) > 2:
-        waypoint_count = len(st.session_state.planned_path) - 2
-        st.info(f"🎯 当前规划包含 {waypoint_count} 个绕行航点")
-
 
 def render_point_settings():
     """起点/终点设置"""
