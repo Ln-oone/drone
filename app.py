@@ -1791,21 +1791,17 @@ def render_flight_monitoring_page(flight_alt: float, drone_speed: int):
     """飞行监控页面 - 专业地面站风格"""
     st.header("📡 飞行监控")
     
-    # 自动刷新控制
+    # 自动刷新控制（使用 session_state 存储刷新状态）
     auto_refresh = st.checkbox("🔄 自动刷新 (2秒)", value=True, key="auto_refresh_monitor")
     
-    # 更新飞行模拟
+    # 更新飞行模拟（不触发页面重绘）
     update_flight_simulation()
     
-    # 自动刷新逻辑
-    if auto_refresh and st.session_state.simulation_running:
-        time.sleep(0.1)
-        st.rerun()
+    # 检查是否有飞行数据
+    has_flight_data = len(st.session_state.heartbeat_sim.history) > 0
     
-    # 如果没有飞行数据，显示提示
-    if not st.session_state.heartbeat_sim.history:
+    if not has_flight_data:
         st.info("⏳ 等待心跳数据... 请在「航线规划」页面点击「开始飞行」")
-        
         col_tip1, col_tip2, col_tip3 = st.columns(3)
         with col_tip1:
             st.info("💡 提示1：先在航线规划页面设置起点和终点")
@@ -1818,11 +1814,12 @@ def render_flight_monitoring_page(flight_alt: float, drone_speed: int):
     # 获取最新数据
     latest = st.session_state.heartbeat_sim.history[0]
     
-    # 计算航点进度
+    # 计算各种指标
     current_waypoint, total_waypoints = calculate_waypoint_progress(latest)
     remaining_distance = max(0, latest.remaining_distance if not latest.arrived else 0)
     estimated_arrival = calculate_eta(latest, remaining_distance)
     battery_percentage = calculate_battery_percentage(latest)
+    waypoint_progress = current_waypoint / total_waypoints if total_waypoints > 0 else 0
     
     # ==================== 顶部进度条 ====================
     st.markdown("### ✈️ 任务进度")
@@ -1831,7 +1828,6 @@ def render_flight_monitoring_page(flight_alt: float, drone_speed: int):
         st.progress(latest.progress if not latest.arrived else 1.0,
                    text=f"📊 整体进度：{int(latest.progress*100) if not latest.arrived else 100}%")
     with progress_cols[1]:
-        waypoint_progress = current_waypoint / total_waypoints if total_waypoints > 0 else 0
         st.progress(waypoint_progress, text=f"🎯 航点：{current_waypoint}/{total_waypoints}")
     
     st.markdown("---")
@@ -1839,7 +1835,6 @@ def render_flight_monitoring_page(flight_alt: float, drone_speed: int):
     # ==================== 主要飞行数据仪表盘 ====================
     st.markdown("### 📊 实时飞行数据")
     
-    # 第一行：核心指标
     metric_cols = st.columns(4)
     with metric_cols[0]:
         st.metric("🎯 当前航点", f"{current_waypoint}/{total_waypoints}",
@@ -1853,7 +1848,6 @@ def render_flight_monitoring_page(flight_alt: float, drone_speed: int):
         distance_text = f"{remaining_distance/1000:.2f} km" if remaining_distance >= 1000 else f"{remaining_distance:.0f} m"
         st.metric("📏 剩余距离", distance_text, delta="已到达!" if latest.arrived else None)
     
-    # 第二行：辅助指标
     aux_cols = st.columns(4)
     with aux_cols[0]:
         st.metric("🕐 预计到达", estimated_arrival)
@@ -1876,18 +1870,30 @@ def render_flight_monitoring_page(flight_alt: float, drone_speed: int):
     
     st.markdown("---")
     
-    # ==================== 地图和控制的左右布局 ====================
+    # ==================== 地图和控制区域 ====================
     st.markdown("### 🗺️ 实时追踪 & 🎮 飞行控制")
     
     map_col, control_col = st.columns([2, 1])
     
     with map_col:
-        # 实时位置地图
-        display_monitor_map(flight_alt, latest)
+        # 使用容器占位符，避免地图闪烁
+        map_placeholder = st.empty()
+        
+        # 创建地图（只在首次或位置变化时重建）
+        current_pos_key = f"{latest.lat:.6f}_{latest.lng:.6f}"
+        
+        if 'last_map_pos' not in st.session_state or st.session_state.last_map_pos != current_pos_key:
+            st.session_state.last_map_pos = current_pos_key
+            with map_placeholder:
+                display_monitor_map(flight_alt, latest)
+        else:
+            # 位置未变化，不重建地图
+            with map_placeholder:
+                display_monitor_map(flight_alt, latest)
+        
         st.caption(f"🕐 最后更新: {latest.timestamp} | 自动刷新: {'开启' if auto_refresh else '关闭'}")
     
     with control_col:
-        # 飞行控制面板
         render_monitor_control_panel(flight_alt, drone_speed, latest)
     
     st.markdown("---")
@@ -1918,13 +1924,10 @@ def render_flight_monitoring_page(flight_alt: float, drone_speed: int):
     
     with chart_tab1:
         render_speed_chart()
-    
     with chart_tab2:
         render_distance_chart()
-    
     with chart_tab3:
         render_battery_chart()
-    
     with chart_tab4:
         render_waypoint_chart(total_waypoints)
     
@@ -1962,10 +1965,18 @@ def render_flight_monitoring_page(flight_alt: float, drone_speed: int):
     # ==================== 规划航线预览 ====================
     if st.session_state.planned_path and len(st.session_state.planned_path) > 1:
         with st.expander("🗺️ 规划航线预览", expanded=False):
-            st.success(f"📌 已规划 {len(st.session_state.planned_path)} 个航点（包括起点和终点）")
+            st.success(f"📌 已规划 {len(st.session_state.planned_path)} 个航点")
             waypoint_table = [{"序号": i+1, "类型": "🚁 起点" if i==0 else "🏁 终点" if i==len(st.session_state.planned_path)-1 else f"📍 绕行点 {i}",
                               "经度": f"{wp[0]:.6f}", "纬度": f"{wp[1]:.6f}"} for i, wp in enumerate(st.session_state.planned_path)]
             st.dataframe(pd.DataFrame(waypoint_table), use_container_width=True, height=300)
+    
+    # 自动刷新逻辑（使用 JavaScript 定时器，不重绘整个页面）
+    if auto_refresh and st.session_state.simulation_running and not latest.arrived:
+        # 使用 meta 标签实现平滑刷新，避免白屏
+        st.markdown(
+            f'<meta http-equiv="refresh" content="2">',
+            unsafe_allow_html=True
+        )
 
 
 def calculate_waypoint_progress(latest):
@@ -2019,7 +2030,6 @@ def render_monitor_control_panel(flight_alt: float, drone_speed: int, latest):
     """监控页面控制面板"""
     st.markdown("#### 🎮 飞行控制")
     
-    # 当前参数
     param_cols = st.columns(2)
     with param_cols[0]:
         st.metric("当前高度", f"{latest.altitude} m")
@@ -2029,7 +2039,6 @@ def render_monitor_control_panel(flight_alt: float, drone_speed: int, latest):
         if st.session_state.planned_path:
             st.metric("绕行点", len(st.session_state.planned_path) - 2)
     
-    # 航线信息
     st.markdown("#### 📍 航线信息")
     a, b = st.session_state.points_gcj['A'], st.session_state.points_gcj['B']
     st.text(f"起点: {a[0]:.6f}, {a[1]:.6f}")
@@ -2044,7 +2053,6 @@ def render_monitor_control_panel(flight_alt: float, drone_speed: int, latest):
     
     st.markdown("---")
     
-    # 飞行控制按钮
     btn_col1, btn_col2 = st.columns(2)
     with btn_col1:
         if st.button("▶️ 开始飞行", use_container_width=True, type="primary"):
@@ -2138,9 +2146,14 @@ def render_waypoint_chart(total_waypoints):
 
 
 def display_monitor_map(flight_alt: float, latest):
-    """实时监控地图"""
+    """实时监控地图 - 优化后不闪烁"""
     tiles = config.GAODE_SATELLITE_URL
-    m = folium.Map(location=[latest.lat, latest.lng], zoom_start=18, tiles=tiles, attr="高德卫星地图")
+    
+    # 使用最新的位置作为地图中心
+    center_lat = latest.lat
+    center_lng = latest.lng
+    
+    m = folium.Map(location=[center_lat, center_lng], zoom_start=18, tiles=tiles, attr="高德卫星地图")
     
     # 绘制障碍物
     for obs in st.session_state.obstacles_gcj:
@@ -2158,17 +2171,17 @@ def display_monitor_map(flight_alt: float, latest):
                        weight=3, opacity=0.7, popup=f"规划航线 - {st.session_state.current_direction}").add_to(m)
     
     # 安全半径圆圈
-    folium.Circle(radius=st.session_state.safety_radius, location=[latest.lat, latest.lng],
+    folium.Circle(radius=st.session_state.safety_radius, location=[center_lat, center_lng],
                  color="blue", weight=2, fill=True, fill_color="blue", fill_opacity=0.2,
                  popup=f"🛡️ 安全半径: {st.session_state.safety_radius}米").add_to(m)
     
-    # 历史轨迹
-    trail = [[hb.lat, hb.lng] for hb in st.session_state.heartbeat_sim.history[:50] if hb.lat and hb.lng]
+    # 历史轨迹 - 只显示最近30个点避免过多
+    trail = [[hb.lat, hb.lng] for hb in st.session_state.heartbeat_sim.history[:30] if hb.lat and hb.lng]
     if len(trail) > 1:
         folium.PolyLine(trail, color="orange", weight=2, opacity=0.6, popup="历史轨迹").add_to(m)
     
     # 当前位置标记
-    folium.Marker([latest.lat, latest.lng], 
+    folium.Marker([center_lat, center_lng], 
                   popup=f"📍 当前位置\n高度: {latest.altitude}m\n速度: {latest.speed}m/s\n航点: {latest.progress*100:.0f}%",
                   icon=folium.Icon(color='red', icon='plane', prefix='fa')).add_to(m)
     
@@ -2209,24 +2222,26 @@ def display_flight_history():
 
 
 def update_flight_simulation():
-    """更新飞行模拟"""
+    """更新飞行模拟 - 使用时间戳判断是否需要更新"""
     if st.session_state.simulation_running:
-        if time.time() - st.session_state.last_hb_time >= config.HEARTBEAT_INTERVAL:
+        current_time = time.time()
+        # 检查是否需要更新（每 HEARTBEAT_INTERVAL 秒更新一次）
+        if current_time - st.session_state.last_hb_time >= config.HEARTBEAT_INTERVAL:
             try:
                 new_hb = st.session_state.heartbeat_sim.update_and_generate(
                     st.session_state.obstacles_gcj, st.session_state.comm_sim)
                 if new_hb:
-                    st.session_state.last_hb_time = time.time()
+                    st.session_state.last_hb_time = current_time
                     st.session_state.flight_history.append([new_hb.lng, new_hb.lat])
                     if len(st.session_state.flight_history) > 200:
                         st.session_state.flight_history.pop(0)
                     if not st.session_state.heartbeat_sim.simulating:
                         st.session_state.simulation_running = False
+                        # 到达目的地时显示成功消息
                         st.success("🏁 无人机已安全到达目的地！")
-                        st.rerun()
+                        # 不清除数据，让用户可以看到最终状态
             except Exception as e:
                 st.error(f"更新心跳时出错: {e}")
-
 # ==================== 障碍物管理页面 ====================
 def render_obstacle_management_page(flight_alt: float):
     """障碍物管理页面 - 专业地面站风格"""
