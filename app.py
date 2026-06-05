@@ -1534,19 +1534,6 @@ def render_path_strategy(flight_alt: float):
     # 当前策略显示
     st.info(f"📌 当前策略: **{st.session_state.current_direction}**")
     
-    # 重新规划按钮
-    if st.button("🔄 重新规划路径", use_container_width=True):
-        with st.spinner("正在规划路径..."):
-            st.session_state.planned_path = create_avoidance_path(
-                st.session_state.points_gcj['A'], st.session_state.points_gcj['B'],
-                st.session_state.obstacles_gcj, flight_alt,
-                st.session_state.current_direction, st.session_state.safety_radius)
-        if st.session_state.planned_path:
-            waypoint_count = len(st.session_state.planned_path) - 2
-            st.success(f"✅ 已规划 {waypoint_count} 个绕行点")
-            st.rerun()
-
-
 def start_flight(flight_alt: float, drone_speed: int):
     """开始飞行"""
     if not st.session_state.points_gcj['A'] or not st.session_state.points_gcj['B']:
