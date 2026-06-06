@@ -1095,10 +1095,11 @@ def render_current_coords_info():
     with info_cols[0]:
         st.metric("📏 直线距离", f"{dist:.0f} 米")
     with info_cols[1]:
-        if st.session_state.planned_path:
+        if st.session_state.planned_path and len(st.session_state.planned_path) > 1:
             total_dist = calculate_path_length(st.session_state.planned_path) * 111000
             delta_dist = total_dist - dist
-            st.metric("🛣️ 规划路径总长", f"{total_dist:.0f} 米", delta=f"+{delta_dist:.0f}m" if delta_dist > 0 else None)
+            st.metric("🛣️ 规划路径总长", f"{total_dist:.0f} 米", 
+                     delta=f"+{delta_dist:.0f}m" if delta_dist > 0 else None)
         else:
             st.metric("🛣️ 规划路径总长", "未规划")
     
@@ -1283,18 +1284,51 @@ def render_planning_map_view(flight_alt: float, straight_blocked: bool):
     flight_trail = [[hb.lng, hb.lat] for hb in st.session_state.heartbeat_sim.history[:20]]
     center = st.session_state.points_gcj['A'] or config.SCHOOL_CENTER_GCJ
     
+    # ========== 修复：检查必要的参数是否存在 ==========
     if st.session_state.planned_path is None:
-        st.session_state.planned_path = create_avoidance_path(
-            st.session_state.points_gcj['A'], st.session_state.points_gcj['B'],
-            st.session_state.obstacles_gcj, flight_alt,
-            st.session_state.current_direction, st.session_state.safety_radius)
+        # 确保所有必要参数都存在
+        if (st.session_state.points_gcj['A'] and st.session_state.points_gcj['B']):
+            st.session_state.planned_path = create_avoidance_path(
+                start=st.session_state.points_gcj['A'],
+                end=st.session_state.points_gcj['B'],
+                obstacles_gcj=st.session_state.obstacles_gcj,
+                flight_altitude=flight_alt,
+                direction=st.session_state.current_direction,
+                safety_radius=st.session_state.safety_radius
+            )
+        else:
+            st.session_state.planned_path = None
     
     drone_pos = st.session_state.heartbeat_sim.current_pos if st.session_state.heartbeat_sim.simulating else None
     
-    m = create_planning_map(center, st.session_state.points_gcj, st.session_state.obstacles_gcj,
-                            flight_trail, st.session_state.planned_path, straight_blocked,
-                            flight_alt, drone_pos, st.session_state.current_direction, 
-                            st.session_state.safety_radius)
+    # 只有存在路径时才创建地图
+    if st.session_state.planned_path:
+        m = create_planning_map(
+            center_gcj=center,
+            points_gcj=st.session_state.points_gcj,
+            obstacles_gcj=st.session_state.obstacles_gcj,
+            flight_history=flight_trail,
+            planned_path=st.session_state.planned_path,
+            straight_blocked=straight_blocked,
+            flight_altitude=flight_alt,
+            drone_pos=drone_pos,
+            direction=st.session_state.current_direction,
+            safety_radius=st.session_state.safety_radius
+        )
+    else:
+        # 没有路径时只显示基础地图
+        m = create_planning_map(
+            center_gcj=center,
+            points_gcj=st.session_state.points_gcj,
+            obstacles_gcj=st.session_state.obstacles_gcj,
+            flight_history=flight_trail,
+            planned_path=None,
+            straight_blocked=straight_blocked,
+            flight_altitude=flight_alt,
+            drone_pos=drone_pos,
+            direction=st.session_state.current_direction,
+            safety_radius=st.session_state.safety_radius
+        )
     
     output = st_folium(m, width=700, height=550, returned_objects=["last_active_drawing", "last_clicked"])
     handle_map_click(output)
