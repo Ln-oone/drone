@@ -1915,24 +1915,18 @@ def render_batch_conversion():
 def render_flight_monitoring_page(flight_alt: float, drone_speed: int):
     st.header("📡 飞行监控 - 实时心跳包")
     
-    # 自动刷新控制 - 只在飞行中显示
+    # 自动刷新控制（仅在飞行中有效）
     if st.session_state.simulation_running:
         auto_refresh = st.checkbox("🔄 自动刷新 (2秒)", value=True, key="auto_refresh_monitor")
-        
-        # 显示自动刷新状态提示
-        if auto_refresh and st.session_state.simulation_running:
-            st.info("🟢 自动刷新已开启 - 页面将每2秒自动更新，飞行结束后自动停止")
-        
-        col_refresh1, col_refresh2 = st.columns([1, 3])
-        with col_refresh1:
-            if st.button("🔄 手动刷新", use_container_width=True):
-                st.rerun()
     else:
-        # 飞行未开始时，只显示手动刷新按钮
-        st.info("⏸️ 飞行未开始，如需查看历史数据请使用手动刷新")
+        auto_refresh = False
+        st.info("⏸️ 飞行未开始，自动刷新已禁用")
+    
+    # 手动刷新按钮
+    col_refresh1, col_refresh2 = st.columns([1, 3])
+    with col_refresh1:
         if st.button("🔄 手动刷新", use_container_width=True):
             st.rerun()
-        auto_refresh = False  # 飞行未开始时自动刷新为False
     
     # 更新飞行模拟数据
     update_flight_simulation()
@@ -1972,7 +1966,7 @@ def render_flight_monitoring_page(flight_alt: float, drone_speed: int):
                 else:
                     current_waypoint = 1  # 起点
         
-        # 航点进度百分比
+        # 计算航点进度百分比
         waypoint_progress_value = current_waypoint / total_waypoints if total_waypoints > 0 else 0
         
         remaining_distance = max(0, latest.remaining_distance if not latest.arrived else 0)
@@ -1994,11 +1988,8 @@ def render_flight_monitoring_page(flight_alt: float, drone_speed: int):
             battery_percentage = max(0, min(100, (battery_percentage + voltage_percentage) / 2))
 
         st.markdown("### ✈️ 飞行进度")
-        
-        # 飞行进度条（整体任务进度）
-        flight_progress = latest.progress if not latest.arrived else 1.0
-        st.progress(flight_progress,
-                    text=f"飞行进度：{int(flight_progress*100)}%")
+        st.progress(latest.progress if not latest.arrived else 1.0,
+                    text=f"飞行进度：{int(latest.progress*100) if not latest.arrived else 100}%")
 
         st.markdown("### 📊 实时飞行数据")
         c1, c2, c3 = st.columns(3)
@@ -2007,7 +1998,7 @@ def render_flight_monitoring_page(flight_alt: float, drone_speed: int):
             if total_waypoints > 0:
                 st.metric("🎯 当前航点", waypoint_display,
                           delta=f"进度 {int(waypoint_progress_value*100)}%" if not latest.arrived else "已完成")
-                # 航点进度条
+                # 添加航点进度条
                 st.progress(waypoint_progress_value, text=f"航点进度: {int(waypoint_progress_value*100)}%")
                 
                 # 显示下一个航点信息
@@ -2016,8 +2007,6 @@ def render_flight_monitoring_page(flight_alt: float, drone_speed: int):
                     st.caption(f"📍 下一航点: ({next_wp[0]:.6f}, {next_wp[1]:.6f})")
                 elif not latest.arrived and current_waypoint == total_waypoints:
                     st.caption("🎯 即将到达终点")
-                elif latest.arrived:
-                    st.success("✅ 所有航点已完成")
             else:
                 st.metric("🎯 当前航点", "0 / 0")
         with c2:
@@ -2055,12 +2044,11 @@ def render_flight_monitoring_page(flight_alt: float, drone_speed: int):
             st.error("⚠️ 警告：无人机进入安全半径危险区域！请立即检查！")
         if latest.arrived:
             st.success("🎉 无人机已到达目的地！飞行任务完成！")
-            # 飞行结束后自动停止模拟标志
-            if st.session_state.simulation_running:
-                st.session_state.simulation_running = False
-                st.rerun()
+            # 飞行结束后自动停止刷新标记
+            if 'auto_refresh_active' in st.session_state:
+                st.session_state.auto_refresh_active = False
 
-        with st.expander("📊 飞行任务总结", expanded=latest.arrived):
+        with st.expander("📊 飞行任务总结", expanded=True):
             c_sum1, c_sum2, c_sum3 = st.columns(3)
             with c_sum1:
                 st.metric("总飞行时间", f"{int(latest.flight_time//60):02d}:{int(latest.flight_time%60):02d}")
@@ -2112,6 +2100,8 @@ def render_flight_monitoring_page(flight_alt: float, drone_speed: int):
                         st.session_state.heartbeat_sim.set_path(path, flight_alt, drone_speed, st.session_state.safety_radius)
                         st.session_state.simulation_running = True
                         st.session_state.flight_history = []
+                        # 启动自动刷新标记
+                        st.session_state.auto_refresh_active = True
                         comm.send_message("FCU", "OBC", "ACK", "Mode: AUTO")
                         comm.send_message("OBC", "GCS", "ACK", "任务已开始")
                         st.success(f"🚁 飞行已开始！{'路径中有' + str(len(path)-2) + '个绕行点' if len(path)>2 else '直线飞行'}")
@@ -2122,6 +2112,7 @@ def render_flight_monitoring_page(flight_alt: float, drone_speed: int):
                 if st.button("⏹️ 停止飞行", use_container_width=True):
                     st.session_state.simulation_running = False
                     st.session_state.heartbeat_sim.simulating = False
+                    st.session_state.auto_refresh_active = False  # 停止自动刷新
                     st.session_state.comm_sim.send_message("GCS", "OBC", "STOP_MISSION", "用户停止飞行")
                     st.info("飞行已停止")
                     st.rerun()
@@ -2220,50 +2211,85 @@ def render_flight_monitoring_page(flight_alt: float, drone_speed: int):
                               "经度": f"{wp[0]:.6f}", "纬度": f"{wp[1]:.6f}"} for i, wp in enumerate(st.session_state.planned_path)]
             st.table(pd.DataFrame(waypoint_table))
     
-    # ========== 自动刷新逻辑（改进版） ==========
-    # 只在飞行中且自动刷新开启时才执行刷新
-    if auto_refresh and st.session_state.simulation_running:
-        # 检查是否已到达终点
-        if st.session_state.heartbeat_sim.history:
-            latest_hb = st.session_state.heartbeat_sim.history[0]
-            if not latest_hb.arrived:
-                # 飞行未结束，继续自动刷新
-                import time
-                time.sleep(2)  # 等待2秒
-                st.rerun()
-            else:
-                # 飞行已结束，自动停止刷新并显示完成信息
-                st.success("✅ 飞行任务已完成，自动刷新已停止")
-                # 确保模拟标志被清除
-                if st.session_state.simulation_running:
-                    st.session_state.simulation_running = False
-    elif auto_refresh and not st.session_state.simulation_running:
-        # 如果自动刷新开启但飞行已停止，显示提示
-        st.info("⏸️ 飞行已停止，自动刷新已暂停。如需继续监控请重新开始飞行。")
+    # 自动刷新逻辑（仅在飞行中且自动刷新开启时执行）
+    if (auto_refresh and st.session_state.simulation_running and 
+        st.session_state.get('auto_refresh_active', False) and 
+        not st.session_state.heartbeat_sim.history[0].arrived if st.session_state.heartbeat_sim.history else False):
+        import time
+        time.sleep(2)  # 等待2秒
+        st.rerun()
+
+
+def display_monitor_map(flight_alt: float, latest):
+    tiles = config.GAODE_SATELLITE_URL
+    m = folium.Map(location=[latest.lat, latest.lng], zoom_start=18, tiles=tiles, attr="高德卫星地图")
+
+    for obs in st.session_state.obstacles_gcj:
+        coords = obs.get('polygon', [])
+        height = obs.get('height', 30)
+        if coords and len(coords) >= 3:
+            color = "red" if height > flight_alt else "orange"
+            folium.Polygon([[c[1], c[0]] for c in coords], color=color, weight=2, fill=True,
+                          fill_opacity=0.3, popup=f"🚧 {obs.get('name')}\n高度: {height}m").add_to(m)
+
+    if st.session_state.planned_path and len(st.session_state.planned_path) > 1:
+        line_color = "purple" if "向左" in st.session_state.current_direction else "orange" if "向右" in st.session_state.current_direction else "green"
+        folium.PolyLine([[p[1], p[0]] for p in st.session_state.planned_path], color=line_color,
+                       weight=3, opacity=0.7, popup=f"规划航线 - {st.session_state.current_direction}").add_to(m)
+
+    folium.Circle(radius=st.session_state.safety_radius, location=[latest.lat, latest.lng],
+                 color="blue", weight=2, fill=True, fill_color="blue", fill_opacity=0.2,
+                 popup=f"🛡️ 安全半径: {st.session_state.safety_radius}米").add_to(m)
+
+    trail = [[hb.lat, hb.lng] for hb in st.session_state.heartbeat_sim.history[:50] if hb.lat and hb.lng]
+    if len(trail) > 1:
+        folium.PolyLine(trail, color="orange", weight=2, opacity=0.6, popup="历史飞行轨迹").add_to(m)
+
+    folium.Marker([latest.lat, latest.lng], popup=f"当前位置\n高度: {latest.altitude}m\n速度: {latest.speed}m/s",
+                 icon=folium.Icon(color='red', icon='plane', prefix='fa')).add_to(m)
+
+    if st.session_state.points_gcj['A']:
+        folium.Marker([st.session_state.points_gcj['A'][1], st.session_state.points_gcj['A'][0]], popup="起点 A",
+                     icon=folium.Icon(color='green', icon='play', prefix='fa')).add_to(m)
+    if st.session_state.points_gcj['B']:
+        folium.Marker([st.session_state.points_gcj['B'][1], st.session_state.points_gcj['B'][0]], popup="终点 B",
+                     icon=folium.Icon(color='red', icon='flag-checkered', prefix='fa')).add_to(m)
+
+    if st.session_state.planned_path and len(st.session_state.planned_path) > 2:
+        for i, point in enumerate(st.session_state.planned_path[1:-1]):
+            folium.CircleMarker([point[1], point[0]], radius=4, color="yellow", fill=True,
+                               fill_color="yellow", fill_opacity=0.8, popup=f"航点 {i+1}").add_to(m)
+
+    folium_static(m, width=900, height=500)
+
+
+def display_flight_history():
+    df = st.session_state.heartbeat_sim.export_flight_data()
+    if not df.empty:
+        display_cols = ['timestamp', 'flight_time', 'lat', 'lng', 'altitude', 'speed', 'voltage', 'satellites', 'remaining_distance']
+        display_cols = [c for c in display_cols if c in df.columns]
+        rename = {'timestamp': '时间', 'flight_time': '飞行时间(s)', 'lat': '纬度', 'lng': '经度',
+                  'altitude': '高度(m)', 'speed': '速度(m/s)', 'voltage': '电压(V)', 'satellites': '卫星数', 'remaining_distance': '剩余距离(m)'}
+        st.dataframe(df[display_cols].head(10).rename(columns=rename), use_container_width=True)
+    else:
+        st.info("暂无飞行数据")
 
 
 def update_flight_simulation():
-    """更新飞行模拟 - 修复无限刷新问题"""
     if st.session_state.simulation_running:
-        current_time = time.time()
-        # 检查是否需要更新心跳
-        if current_time - st.session_state.last_hb_time >= config.HEARTBEAT_INTERVAL:
+        if time.time() - st.session_state.last_hb_time >= config.HEARTBEAT_INTERVAL:
             try:
-                new_hb = st.session_state.heartbeat_sim.update_and_generate(
-                    st.session_state.obstacles_gcj, 
-                    st.session_state.comm_sim
-                )
+                new_hb = st.session_state.heartbeat_sim.update_and_generate(st.session_state.obstacles_gcj, st.session_state.comm_sim)
                 if new_hb:
-                    st.session_state.last_hb_time = current_time
+                    st.session_state.last_hb_time = time.time()
                     st.session_state.flight_history.append([new_hb.lng, new_hb.lat])
                     if len(st.session_state.flight_history) > 200:
                         st.session_state.flight_history.pop(0)
-                    
-                    # 检查是否到达终点
                     if not st.session_state.heartbeat_sim.simulating:
                         st.session_state.simulation_running = False
-                        # 不在这里调用 st.rerun()，避免重复刷新
+                        st.session_state.auto_refresh_active = False  # 飞行结束，停止自动刷新
                         st.success("🏁 无人机已安全到达目的地！")
+                        st.rerun()
             except Exception as e:
                 st.error(f"更新心跳时出错: {e}")
 
