@@ -1914,25 +1914,61 @@ def render_batch_conversion():
 # ==================== 飞行监控页面 ====================
 def render_flight_monitoring_page(flight_alt: float, drone_speed: int):
     st.header("📡 飞行监控 - 实时心跳包")
+    
+    # 自动刷新控制
+    auto_refresh = st.checkbox("🔄 自动刷新 (2秒)", value=True, key="auto_refresh_monitor")
+    
+    # 手动刷新按钮
+    col_refresh1, col_refresh2 = st.columns([1, 3])
+    with col_refresh1:
+        if st.button("🔄 手动刷新", use_container_width=True):
+            st.rerun()
+    
+    # 更新飞行模拟数据
     update_flight_simulation()
 
     if st.session_state.heartbeat_sim.history:
         latest = st.session_state.heartbeat_sim.history[0]
+        
+        # ========== 修复航点计算逻辑 ==========
         current_waypoint = 0
         total_waypoints = 0
 
         if st.session_state.planned_path and len(st.session_state.planned_path) > 1:
             total_waypoints = len(st.session_state.planned_path)
+            
             if latest.arrived:
+                # 已到达终点
                 current_waypoint = total_waypoints
-            elif latest.progress >= 0 and not latest.arrived:
-                if latest.progress < 1.0:
-                    segment_index = int(latest.progress * (len(st.session_state.planned_path) - 1))
-                    current_waypoint = segment_index + 1
+            else:
+                # 根据当前位置计算当前航点
+                # 方法1：基于进度计算（原有方法但修正）
+                if latest.progress >= 0:
+                    # 计算当前所在的航段索引
+                    segment_count = len(st.session_state.planned_path) - 1
+                    segment_index = int(latest.progress * segment_count)
+                    
+                    # 确保索引在有效范围内
+                    segment_index = min(segment_index, segment_count - 1) if segment_count > 0 else 0
+                    
+                    # 当前航点是下一个要到达的航点
+                    if latest.progress >= 0.999:  # 接近终点
+                        current_waypoint = total_waypoints
+                    else:
+                        current_waypoint = segment_index + 1
+                    
+                    # 边界检查
+                    current_waypoint = min(current_waypoint, total_waypoints)
+                    current_waypoint = max(current_waypoint, 1)
                 else:
-                    current_waypoint = total_waypoints
-                current_waypoint = min(current_waypoint, total_waypoints)
-
+                    current_waypoint = 1  # 起点
+        
+        # 调试信息（可选，用于验证）
+        # st.caption(f"调试: progress={latest.progress:.3f}, total={total_waypoints}, current={current_waypoint}")
+        
+        # 计算航点进度百分比
+        waypoint_progress_value = current_waypoint / total_waypoints if total_waypoints > 0 else 0
+        
         remaining_distance = max(0, latest.remaining_distance if not latest.arrived else 0)
 
         estimated_arrival = "00:00" if latest.arrived else "计算中..."
@@ -1960,10 +1996,17 @@ def render_flight_monitoring_page(flight_alt: float, drone_speed: int):
         with c1:
             waypoint_display = f"{current_waypoint} / {total_waypoints}"
             if total_waypoints > 0:
-                waypoint_progress_value = current_waypoint / total_waypoints
                 st.metric("🎯 当前航点", waypoint_display,
                           delta=f"进度 {int(waypoint_progress_value*100)}%" if not latest.arrived else "已完成")
+                # 添加航点进度条
                 st.progress(waypoint_progress_value, text=f"航点进度: {int(waypoint_progress_value*100)}%")
+                
+                # 显示下一个航点信息
+                if not latest.arrived and current_waypoint < total_waypoints:
+                    next_wp = st.session_state.planned_path[current_waypoint]
+                    st.caption(f"📍 下一航点: ({next_wp[0]:.6f}, {next_wp[1]:.6f})")
+                elif not latest.arrived and current_waypoint == total_waypoints:
+                    st.caption("🎯 即将到达终点")
             else:
                 st.metric("🎯 当前航点", "0 / 0")
         with c2:
@@ -2087,9 +2130,6 @@ def render_flight_monitoring_page(flight_alt: float, drone_speed: int):
                                    file_name=f"waypoints_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
                                    mime="text/csv")
 
-        if st.button("🔄 刷新数据", use_container_width=True):
-            st.rerun()
-
         st.markdown("---")
         st.markdown("### 📈 实时数据图表")
         c_ch1, c_ch2 = st.columns(2)
@@ -2127,7 +2167,19 @@ def render_flight_monitoring_page(flight_alt: float, drone_speed: int):
                     if h.arrived:
                         hist_waypoint = total_waypoints
                     else:
-                        hist_waypoint = min(int(h.progress * (total_waypoints - 1)) + 1, total_waypoints) if h.progress < 1.0 else total_waypoints
+                        # 使用修正后的航点计算逻辑
+                        segment_count = total_waypoints - 1
+                        if segment_count > 0 and h.progress >= 0:
+                            segment_index = int(h.progress * segment_count)
+                            segment_index = min(segment_index, segment_count - 1) if segment_count > 0 else 0
+                            if h.progress >= 0.999:
+                                hist_waypoint = total_waypoints
+                            else:
+                                hist_waypoint = segment_index + 1
+                            hist_waypoint = min(hist_waypoint, total_waypoints)
+                            hist_waypoint = max(hist_waypoint, 1)
+                        else:
+                            hist_waypoint = 1
                     waypoint_data.append({"时间(s)": i * config.HEARTBEAT_INTERVAL, "已完成航点": hist_waypoint})
                 st.line_chart(pd.DataFrame(waypoint_data), x="时间(s)", y="已完成航点")
 
@@ -2152,6 +2204,13 @@ def render_flight_monitoring_page(flight_alt: float, drone_speed: int):
             waypoint_table = [{"序号": i+1, "类型": "🚁 起点" if i==0 else "🏁 终点" if i==len(st.session_state.planned_path)-1 else f"📍 绕行点 {i}",
                               "经度": f"{wp[0]:.6f}", "纬度": f"{wp[1]:.6f}"} for i, wp in enumerate(st.session_state.planned_path)]
             st.table(pd.DataFrame(waypoint_table))
+    
+    # 自动刷新逻辑（放在函数末尾）
+    if auto_refresh and st.session_state.simulation_running:
+        import time
+        time.sleep(2)  # 等待2秒
+        st.rerun()
+
 
 def display_monitor_map(flight_alt: float, latest):
     tiles = config.GAODE_SATELLITE_URL
@@ -2195,6 +2254,7 @@ def display_monitor_map(flight_alt: float, latest):
 
     folium_static(m, width=900, height=500)
 
+
 def display_flight_history():
     df = st.session_state.heartbeat_sim.export_flight_data()
     if not df.empty:
@@ -2205,6 +2265,7 @@ def display_flight_history():
         st.dataframe(df[display_cols].head(10).rename(columns=rename), use_container_width=True)
     else:
         st.info("暂无飞行数据")
+
 
 def update_flight_simulation():
     if st.session_state.simulation_running:
@@ -2223,7 +2284,9 @@ def update_flight_simulation():
             except Exception as e:
                 st.error(f"更新心跳时出错: {e}")
         else:
-            st.session_state.last_hb_time = time.time()
+            # 修复：避免无限递归，只在需要时更新时间戳
+            if time.time() - st.session_state.last_hb_time < config.HEARTBEAT_INTERVAL:
+                pass  # 正常情况，不需要更新时间戳
 
 # ==================== 障碍物管理页面 ====================
 def render_obstacle_management_page(flight_alt: float):
