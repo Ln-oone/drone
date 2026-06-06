@@ -376,214 +376,43 @@ def restore_from_backup(backup_path: str) -> bool:
         st.error(f"恢复备份失败: {e}")
         return False
 # ==================== 优化的绕行算法====================
-import math
-from typing import List, Dict, Tuple, Optional
-from heapq import heappush, heappop
-
-def get_obstacle_vertices(obstacle: Dict) -> List[List[float]]:
-    """获取障碍物的所有顶点"""
-    return obstacle.get('polygon', [])
-
-def expand_polygon_for_safety(polygon: List[List[float]], safety_radius: float, 
-                               lat: float) -> List[List[float]]:
-    """将多边形向外扩展安全半径，生成安全边界"""
-    if not polygon or len(polygon) < 3:
-        return polygon
+def generate_optimal_waypoints(start: List[float], end: List[float],
+                                obstacles: List[Dict], safety_radius: float,
+                                side: str) -> List[List[float]]:
+    """简化版最优绕行 - 4-6个航点"""
     
-    # 计算扩展距离（度）
-    deg_per_meter = 1 / (111000 * math.cos(math.radians(lat)))
-    expand_deg = safety_radius * deg_per_meter
+    if not obstacles:
+        return [start, end]
     
-    # 计算中心点
-    center_lng = sum(p[0] for p in polygon) / len(polygon)
-    center_lat = sum(p[1] for p in polygon) / len(polygon)
+    # 获取障碍物边界
+    min_lng = min(p[0] for obs in obstacles for p in obs.get('polygon', []))
+    max_lng = max(p[0] for obs in obstacles for p in obs.get('polygon', []))
+    min_lat = min(p[1] for obs in obstacles for p in obs.get('polygon', []))
+    max_lat = max(p[1] for obs in obstacles for p in obs.get('polygon', []))
     
-    # 向外扩展每个顶点
-    expanded = []
-    for p in polygon:
-        dx = p[0] - center_lng
-        dy = p[1] - center_lat
-        dist = math.hypot(dx, dy)
-        if dist > 0:
-            ratio = 1 + expand_deg / dist
-            expanded.append([center_lng + dx * ratio, center_lat + dy * ratio])
-        else:
-            expanded.append([p[0] + expand_deg, p[1]])
-    
-    return expanded
-
-def build_visibility_graph(start: List[float], end: List[float], 
-                           obstacles: List[Dict], safety_radius: float,
-                           flight_altitude: float) -> Dict:
-    """构建可见性图 - 找到所有安全的路径节点"""
-    
-    # 收集所有关键点：起点、终点、障碍物扩展顶点
-    nodes = [start, end]
+    # 计算安全偏移
     mid_lat = (start[1] + end[1]) / 2
+    deg_per_meter = 1 / (111000 * math.cos(math.radians(mid_lat)))
+    offset = (safety_radius + 1.5) * deg_per_meter
     
-    for obs in obstacles:
-        if obs.get('height', 30) <= flight_altitude:
-            continue
-        poly = obs.get('polygon', [])
-        if poly:
-            # 使用扩展后的安全边界顶点
-            expanded_poly = expand_polygon_for_safety(poly, safety_radius + 1.0, mid_lat)
-            nodes.extend(expanded_poly)
+    # 绕行边界
+    if side == "right":
+        bypass_lng = max_lng + offset
+    else:
+        bypass_lng = min_lng - offset
     
-    # 去重（保留6位精度）
-    unique_nodes = []
-    for node in nodes:
-        is_duplicate = False
-        for existing in unique_nodes:
-            if abs(node[0] - existing[0]) < 1e-6 and abs(node[1] - existing[1]) < 1e-6:
-                is_duplicate = True
-                break
-        if not is_duplicate:
-            unique_nodes.append(node)
+    # 生成5个均匀分布的航点（起点和终点之间）
+    waypoints = []
+    for t in [0.1, 0.3, 0.5, 0.7, 0.9]:
+        lat = start[1] + (end[1] - start[1]) * t
+        # 确保纬度在障碍物上下方
+        if lat < min_lat:
+            lat = min_lat - offset * 0.5
+        elif lat > max_lat:
+            lat = max_lat + offset * 0.5
+        waypoints.append([bypass_lng, lat])
     
-    # 构建可见性边（检查两点之间是否安全）
-    graph = {i: [] for i in range(len(unique_nodes))}
-    
-    for i in range(len(unique_nodes)):
-        for j in range(i + 1, len(unique_nodes)):
-            # 检查线段是否安全
-            if is_path_segment_clear(unique_nodes[i], unique_nodes[j], 
-                                     obstacles, flight_altitude, safety_radius):
-                dist = distance(unique_nodes[i], unique_nodes[j]) * 111000
-                graph[i].append((j, dist))
-                graph[j].append((i, dist))
-    
-    return graph, unique_nodes
-
-def a_star_search(graph, nodes, start_idx, end_idx) -> Optional[List[int]]:
-    """A*算法搜索最短路径"""
-    # 启发函数：欧几里得距离
-    def heuristic(a, b):
-        return distance(nodes[a], nodes[b]) * 111000
-    
-    open_set = [(0, start_idx)]
-    came_from = {}
-    g_score = {i: float('inf') for i in range(len(nodes))}
-    g_score[start_idx] = 0
-    
-    while open_set:
-        current = heappop(open_set)[1]
-        
-        if current == end_idx:
-            # 重建路径
-            path = []
-            while current in came_from:
-                path.append(current)
-                current = came_from[current]
-            path.append(start_idx)
-            path.reverse()
-            return path
-        
-        for neighbor, cost in graph[current]:
-            tentative_g = g_score[current] + cost
-            if tentative_g < g_score[neighbor]:
-                came_from[neighbor] = current
-                g_score[neighbor] = tentative_g
-                heappush(open_set, (tentative_g + heuristic(neighbor, end_idx), neighbor))
-    
-    return None
-
-def path_smoothing(path: List[List[float]], obstacles: List[Dict], 
-                   flight_altitude: float, safety_radius: float) -> List[List[float]]:
-    """路径平滑 - 去除冗余航点，优化转弯"""
-    if len(path) <= 2:
-        return path
-    
-    smoothed = [path[0]]
-    i = 0
-    
-    while i < len(path) - 1:
-        # 尝试跳过中间点
-        furthest = i + 1
-        for j in range(i + 2, len(path)):
-            if is_path_segment_clear(path[i], path[j], obstacles, flight_altitude, safety_radius):
-                furthest = j
-            else:
-                break
-        smoothed.append(path[furthest])
-        i = furthest
-    
-    # 确保终点在路径中
-    if smoothed[-1] != path[-1]:
-        smoothed.append(path[-1])
-    
-    return smoothed
-
-def create_best_avoidance_path(start: List[float], end: List[float],
-                                obstacles_gcj: List[Dict], flight_altitude: float,
-                                direction: str, safety_radius: float = 5) -> List[List[float]]:
-    """最佳绕行路径 - 综合算法"""
-    
-    # 获取阻挡障碍物
-    blocking = []
-    for obs in obstacles_gcj:
-        if obs.get('height', 30) > flight_altitude:
-            coords = obs.get('polygon', [])
-            if coords and line_intersects_polygon(start, end, coords):
-                blocking.append(obs)
-    
-    # 无障碍物，直线飞行
-    if not blocking:
-        return [start, end]
-    
-    # 根据方向过滤障碍物（可选）
-    if direction == "向左绕行":
-        # 只考虑左侧障碍物
-        mid_lat = (start[1] + end[1]) / 2
-        blocking = [obs for obs in blocking 
-                    if get_obstacle_center(obs)[0] < (start[0] + end[0]) / 2]
-    elif direction == "向右绕行":
-        mid_lat = (start[1] + end[1]) / 2
-        blocking = [obs for obs in blocking 
-                    if get_obstacle_center(obs)[0] > (start[0] + end[0]) / 2]
-    
-    if not blocking:
-        # 指定方向无障碍物，直线飞行
-        return [start, end]
-    
-    # 使用可见性图 + A* 算法
-    graph, nodes = build_visibility_graph(start, end, blocking, safety_radius, flight_altitude)
-    
-    # 找到起点和终点的索引
-    start_idx = None
-    end_idx = None
-    for i, node in enumerate(nodes):
-        if abs(node[0] - start[0]) < 1e-8 and abs(node[1] - start[1]) < 1e-8:
-            start_idx = i
-        if abs(node[0] - end[0]) < 1e-8 and abs(node[1] - end[1]) < 1e-8:
-            end_idx = i
-    
-    if start_idx is None or end_idx is None:
-        return [start, end]
-    
-    # A* 搜索
-    path_indices = a_star_search(graph, nodes, start_idx, end_idx)
-    
-    if not path_indices:
-        return [start, end]
-    
-    # 转换回坐标
-    raw_path = [nodes[i] for i in path_indices]
-    
-    # 路径平滑
-    smoothed_path = path_smoothing(raw_path, blocking, flight_altitude, safety_radius)
-    
-    # 确保航点数量在4-6个之间
-    if len(smoothed_path) > 8:
-        # 如果航点太多，进行下采样
-        step = max(1, len(smoothed_path) // 6)
-        sampled = [smoothed_path[0]]
-        for i in range(step, len(smoothed_path) - 1, step):
-            sampled.append(smoothed_path[i])
-        sampled.append(smoothed_path[-1])
-        return sampled
-    
-    return smoothed_path
+    return [start] + waypoints + [end]
     
 # ==================== 心跳包模拟器 ====================
 @dataclass
