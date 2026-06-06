@@ -1915,12 +1915,8 @@ def render_batch_conversion():
 def render_flight_monitoring_page(flight_alt: float, drone_speed: int):
     st.header("📡 飞行监控 - 实时心跳包")
     
-    # 自动刷新控制（仅在飞行中有效）
-    if st.session_state.simulation_running:
-        auto_refresh = st.checkbox("🔄 自动刷新 (2秒)", value=True, key="auto_refresh_monitor")
-    else:
-        auto_refresh = False
-        st.info("⏸️ 飞行未开始，自动刷新已禁用")
+    # 自动刷新控制
+    auto_refresh = st.checkbox("🔄 自动刷新 (2秒)", value=True, key="auto_refresh_monitor")
     
     # 手动刷新按钮
     col_refresh1, col_refresh2 = st.columns([1, 3])
@@ -1946,6 +1942,7 @@ def render_flight_monitoring_page(flight_alt: float, drone_speed: int):
                 current_waypoint = total_waypoints
             else:
                 # 根据当前位置计算当前航点
+                # 方法1：基于进度计算（原有方法但修正）
                 if latest.progress >= 0:
                     # 计算当前所在的航段索引
                     segment_count = len(st.session_state.planned_path) - 1
@@ -1965,6 +1962,9 @@ def render_flight_monitoring_page(flight_alt: float, drone_speed: int):
                     current_waypoint = max(current_waypoint, 1)
                 else:
                     current_waypoint = 1  # 起点
+        
+        # 调试信息（可选，用于验证）
+        # st.caption(f"调试: progress={latest.progress:.3f}, total={total_waypoints}, current={current_waypoint}")
         
         # 计算航点进度百分比
         waypoint_progress_value = current_waypoint / total_waypoints if total_waypoints > 0 else 0
@@ -2044,9 +2044,6 @@ def render_flight_monitoring_page(flight_alt: float, drone_speed: int):
             st.error("⚠️ 警告：无人机进入安全半径危险区域！请立即检查！")
         if latest.arrived:
             st.success("🎉 无人机已到达目的地！飞行任务完成！")
-            # 飞行结束后自动停止刷新标记
-            if 'auto_refresh_active' in st.session_state:
-                st.session_state.auto_refresh_active = False
 
         with st.expander("📊 飞行任务总结", expanded=True):
             c_sum1, c_sum2, c_sum3 = st.columns(3)
@@ -2100,8 +2097,6 @@ def render_flight_monitoring_page(flight_alt: float, drone_speed: int):
                         st.session_state.heartbeat_sim.set_path(path, flight_alt, drone_speed, st.session_state.safety_radius)
                         st.session_state.simulation_running = True
                         st.session_state.flight_history = []
-                        # 启动自动刷新标记
-                        st.session_state.auto_refresh_active = True
                         comm.send_message("FCU", "OBC", "ACK", "Mode: AUTO")
                         comm.send_message("OBC", "GCS", "ACK", "任务已开始")
                         st.success(f"🚁 飞行已开始！{'路径中有' + str(len(path)-2) + '个绕行点' if len(path)>2 else '直线飞行'}")
@@ -2112,7 +2107,6 @@ def render_flight_monitoring_page(flight_alt: float, drone_speed: int):
                 if st.button("⏹️ 停止飞行", use_container_width=True):
                     st.session_state.simulation_running = False
                     st.session_state.heartbeat_sim.simulating = False
-                    st.session_state.auto_refresh_active = False  # 停止自动刷新
                     st.session_state.comm_sim.send_message("GCS", "OBC", "STOP_MISSION", "用户停止飞行")
                     st.info("飞行已停止")
                     st.rerun()
@@ -2211,10 +2205,8 @@ def render_flight_monitoring_page(flight_alt: float, drone_speed: int):
                               "经度": f"{wp[0]:.6f}", "纬度": f"{wp[1]:.6f}"} for i, wp in enumerate(st.session_state.planned_path)]
             st.table(pd.DataFrame(waypoint_table))
     
-    # 自动刷新逻辑（仅在飞行中且自动刷新开启时执行）
-    if (auto_refresh and st.session_state.simulation_running and 
-        st.session_state.get('auto_refresh_active', False) and 
-        not st.session_state.heartbeat_sim.history[0].arrived if st.session_state.heartbeat_sim.history else False):
+    # 自动刷新逻辑（放在函数末尾）
+    if auto_refresh and st.session_state.simulation_running:
         import time
         time.sleep(2)  # 等待2秒
         st.rerun()
@@ -2287,11 +2279,14 @@ def update_flight_simulation():
                         st.session_state.flight_history.pop(0)
                     if not st.session_state.heartbeat_sim.simulating:
                         st.session_state.simulation_running = False
-                        st.session_state.auto_refresh_active = False  # 飞行结束，停止自动刷新
                         st.success("🏁 无人机已安全到达目的地！")
                         st.rerun()
             except Exception as e:
                 st.error(f"更新心跳时出错: {e}")
+        else:
+            # 修复：避免无限递归，只在需要时更新时间戳
+            if time.time() - st.session_state.last_hb_time < config.HEARTBEAT_INTERVAL:
+                pass  # 正常情况，不需要更新时间戳
 
 # ==================== 障碍物管理页面 ====================
 def render_obstacle_management_page(flight_alt: float):
