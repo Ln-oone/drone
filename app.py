@@ -2562,7 +2562,18 @@ def update_path_after_obstacle_change(flight_alt: float):
             st.session_state.points_gcj['A'], st.session_state.points_gcj['B'],
             st.session_state.obstacles_gcj, flight_alt,
             st.session_state.current_direction, st.session_state.safety_radius)
-
+# 在障碍物变化后调用
+def refresh_avoidance_path():
+    """刷新绕行路径"""
+    if st.session_state.points_gcj['A'] and st.session_state.points_gcj['B']:
+        st.session_state.planned_path = create_avoidance_path(
+            start=st.session_state.points_gcj['A'],
+            end=st.session_state.points_gcj['B'],
+            obstacles_gcj=st.session_state.obstacles_gcj,
+            flight_altitude=st.session_state.last_flight_altitude,
+            direction=st.session_state.current_direction,
+            safety_radius=st.session_state.safety_radius
+        )
 
 # ==================== 主程序 ====================
 def main():
