@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 class Config:
     """系统配置类"""
     SCHOOL_CENTER_GCJ: List[float] = field(default_factory=lambda: [118.7490, 32.2340])
-    DEFAULT_A_GCJ: List[float] = field(default_factory=lambda: [118.748726, 32.233881])
+    DEFAULT_A_GCJ: List[float] = field(default_factory=lambda: [118.749155 , 32.233767])
     DEFAULT_B_GCJ: List[float] = field(default_factory=lambda: [118.750110, 32.235460])
     CONFIG_FILE: str = "obstacle_config.json"
     BACKUP_DIR: str = "backups"
