@@ -1914,6 +1914,28 @@ def render_batch_conversion():
 # ==================== 飞行监控页面 ====================
 def render_flight_monitoring_page(flight_alt: float, drone_speed: int):
     st.header("📡 飞行监控 - 实时心跳包")
+
+ # ==================== 新增：预留接口说明 ====================
+    with st.expander("🔌 接口规划与预留说明", expanded=False):
+        st.info("""
+        **📌 当前数据为模拟数据，已预留 MAVLink 解析接口**
+        
+        后续可替换为真实 SITL/无人机数据，通过以下方式接入：
+        - **UDP 端口**: 14550 (默认)
+        - **协议**: MAVLink 1.0 / 2.0
+        - **数据源**: PX4 SITL / 真实飞控
+        
+        **已规划支持的 MAVLink 消息类型：**
+        | 消息类型 | 用途 | 对应显示字段 |
+        |---------|------|-------------|
+        | `HEARTBEAT` | 系统心跳，检测连接状态 | 飞行状态、系统在线 |
+        | `SYS_STATUS` | 系统状态与电池信息 | 电量、电压 |
+        | `GLOBAL_POSITION_INT` | 全球定位信息 | 经纬度、高度、速度 |
+        | `ATTITUDE` | 姿态数据 (Roll/Pitch/Yaw) | 预留扩展 |
+        | `VFR_HUD` | 飞行仪表数据 | 速度、高度、航向 |
+        | `GPS_RAW_INT` | GPS 原始数据 | 卫星数量、定位精度 |
+        
+        **数据处理流程：**
     
     # 自动刷新控制
     auto_refresh = st.checkbox("🔄 自动刷新 (2秒)", value=True, key="auto_refresh_monitor")
@@ -2334,7 +2356,7 @@ def render_obstacle_management_page(flight_alt: float):
     st.markdown("### 🛠️ 工具栏")
     tool_cols = st.columns([1, 1, 1, 1, 2])
     with tool_cols[0]:
-        if st.button("💾 保存配置", use_container_width=True, type="primary"):
+        if st.button("💾 保存JSON", use_container_width=True, type="primary"):
             if save_obstacles(st.session_state.obstacles_gcj):
                 st.success(f"✅ 已保存 {len(st.session_state.obstacles_gcj)} 个障碍物")
                 st.balloons()
@@ -2346,30 +2368,30 @@ def render_obstacle_management_page(flight_alt: float):
                 'export_time': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 'version': 'v13.2'
             }
-            st.download_button(label="📥 导出配置", data=json.dumps(config_data, ensure_ascii=False, indent=2),
+            st.download_button(label="📥 导出JSON", data=json.dumps(config_data, ensure_ascii=False, indent=2),
                                file_name=f"obstacles_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
                                mime="application/json", use_container_width=True)
         else:
-            st.download_button(label="📥 导出配置", data=json.dumps({"obstacles": [], "count": 0}, ensure_ascii=False, indent=2),
+            st.download_button(label="📥 导出JSON", data=json.dumps({"obstacles": [], "count": 0}, ensure_ascii=False, indent=2),
                                file_name=f"obstacles_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
                                mime="application/json", use_container_width=True, disabled=True)
             st.caption("📭 暂无障碍物")
     with tool_cols[2]:
         latest_backup = get_latest_backup()
         if latest_backup:
-            if st.button("🔄 恢复备份", use_container_width=True):
+            if st.button("🔄 恢复JSON", use_container_width=True):
                 if restore_from_backup(latest_backup):
                     st.session_state.obstacles_gcj = load_obstacles()
                     for obs in st.session_state.obstacles_gcj:
                         obs['selected'] = False
                     update_path_after_obstacle_change(flight_alt)
-                    st.success("✅ 已从备份恢复")
+                    st.success("✅ 已从JSON恢复")
                     st.rerun()
                 else:
                     st.error("❌ 恢复失败")
         else:
-            st.button("🔄 恢复备份", use_container_width=True, disabled=True)
-            st.caption("📭 暂无备份")
+            st.button("🔄 恢复JSON", use_container_width=True, disabled=True)
+            st.caption("📭 暂无JSON")
     with tool_cols[3]:
         if st.button("🗑️ 清除全部", use_container_width=True):
             if st.session_state.obstacles_gcj:
