@@ -1303,70 +1303,7 @@ def render_communication_page():
 
             **📝 报文结构**
 
-**📊 当前解析值**
-| 字段 | 值 | 说明 |
-|------|-----|------|
-| voltage_battery | 22.2V | 电池电压 |
-| current_battery | 12.5A | 电池电流 |
-| battery_remaining | 85% | 剩余电量 |
-| load | 0.8 | CPU负载 |
-| 通信丢包率 | 0% | 通信正常 |
 
-**🔔 状态说明**
-- ✅ 电池状态: 正常 (85%)
-- ✅ 传感器状态: 全部正常
-- ✅ 通信状态: 正常
-""")
-elif msg_type == "GLOBAL_POSITION_INT":
-lat = 32.233767 + random.uniform(-0.00005, 0.00005)
-lon = 118.749155 + random.uniform(-0.00005, 0.00005)
-st.markdown(f"""
-### 🌍 GLOBAL_POSITION_INT 报文 (ID: 33)
-
-**📝 报文结构**
-
-**📊 当前解析值**
-| 字段 | 值 | 说明 |
-|------|-----|------|
-| 纬度 | {lat:.8f}° | 当前位置 |
-| 经度 | {lon:.8f}° | 当前位置 |
-| 绝对高度 | 50.0 m | 海平面高度 |
-| 相对高度 | 50.0 m | 起飞点高度 |
-| 航向 | 180.0° | 机头方向 |
-
-**📍 位置信息**
-- 当前位置: 南京理工大学
-- 高度: 50m (相对起飞点)
-""")
-elif msg_type == "ATTITUDE":
-roll = random.uniform(-3, 3)
-pitch = random.uniform(-2, 2)
-yaw = random.uniform(0, 360)
-st.markdown(f"""
-### 🔄 ATTITUDE 报文 (ID: 30)
-
-**📝 报文结构**
-
-**📊 当前解析值**
-| 字段 | 值 | 说明 |
-|------|-----|------|
-| 横滚角 (Roll) | {roll:.1f}° | 左右倾斜 |
-| 俯仰角 (Pitch) | {pitch:.1f}° | 前后倾斜 |
-| 偏航角 (Yaw) | {yaw:.1f}° | 机头方向 |
-
-**📐 姿态指示**
-- 飞行姿态: 稳定
-- 角度变化: 平稳
-""")
-elif msg_type == "VFR_HUD":
-airspeed = random.uniform(5, 15)
-groundspeed = random.uniform(4, 12)
-heading = random.uniform(0, 360)
-throttle = random.randint(40, 70)
-st.markdown(f"""
-### 📊 VFR_HUD 报文 (ID: 74)
-
-**📝 报文结构**
 
 **📊 当前解析值**
 | 字段 | 值 | 说明 |
