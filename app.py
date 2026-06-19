@@ -1914,6 +1914,28 @@ def render_batch_conversion():
 # ==================== 飞行监控页面 ====================
 def render_flight_monitoring_page(flight_alt: float, drone_speed: int):
     st.header("📡 飞行监控 - 实时心跳包")
+
+ # ==================== 新增：预留接口说明 ====================
+    with st.expander("🔌 接口规划与预留说明", expanded=False):
+        st.info("""
+        **📌 当前数据为模拟数据，已预留 MAVLink 解析接口**
+        
+        后续可替换为真实 SITL/无人机数据，通过以下方式接入：
+        - **UDP 端口**: 14550 (默认)
+        - **协议**: MAVLink 1.0 / 2.0
+        - **数据源**: PX4 SITL / 真实飞控
+        
+        **已规划支持的 MAVLink 消息类型：**
+        | 消息类型 | 用途 | 对应显示字段 |
+        |---------|------|-------------|
+        | `HEARTBEAT` | 系统心跳，检测连接状态 | 飞行状态、系统在线 |
+        | `SYS_STATUS` | 系统状态与电池信息 | 电量、电压 |
+        | `GLOBAL_POSITION_INT` | 全球定位信息 | 经纬度、高度、速度 |
+        | `ATTITUDE` | 姿态数据 (Roll/Pitch/Yaw) | 预留扩展 |
+        | `VFR_HUD` | 飞行仪表数据 | 速度、高度、航向 |
+        | `GPS_RAW_INT` | GPS 原始数据 | 卫星数量、定位精度 |
+        
+        **数据处理流程：**
     
     # 自动刷新控制
     auto_refresh = st.checkbox("🔄 自动刷新 (2秒)", value=True, key="auto_refresh_monitor")
