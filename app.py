@@ -99,6 +99,142 @@ class CoordinateConverter:
         gcj_lng, gcj_lat = cls.wgs84_to_gcj02(lng, lat)
         return gcj_lng - lng, gcj_lat - lat
 
+
+# ==================== MAVLink 接口规划文档 ====================
+class MAVLinkInterfaceSpec:
+    """
+    MAVLink 接口规划文档
+    
+    【预留接口说明】
+    当前飞行监控模块使用模拟数据展示，已预留 MAVLink 消息解析接口。
+    后续可通过替换数据源接入真实的 SITL（Software In The Loop）数据流。
+    
+    【支持的 MAVLink 消息类型】（规划中）
+    1. HEARTBEAT (ID: 0)
+       - 功能：无人机心跳包，用于检测系统状态
+       - 频率：1Hz
+       - 关键字段：type, autopilot, base_mode, system_status
+       - 处理流程：接收 → 解析 → 更新系统状态显示
+    
+    2. SYS_STATUS (ID: 1)
+       - 功能：系统状态信息，包含电池、传感器等
+       - 频率：1Hz
+       - 关键字段：battery_remaining, voltage_battery, current_battery
+       - 处理流程：接收 → 解析 → 更新电量/电压显示
+    
+    3. GLOBAL_POSITION_INT (ID: 33)
+       - 功能：全球定位信息（经纬度、高度）
+       - 频率：10Hz
+       - 关键字段：lat, lon, alt, relative_alt
+       - 处理流程：接收 → 解析 → 更新位置显示与地图标记
+    
+    4. ATTITUDE (ID: 30)
+       - 功能：姿态信息（横滚、俯仰、偏航）
+       - 频率：10Hz
+       - 关键字段：roll, pitch, yaw
+       - 处理流程：接收 → 解析 → 更新姿态显示
+    
+    5. VFR_HUD (ID: 74)
+       - 功能：飞行状态数据（速度、高度、航向）
+       - 频率：10Hz
+       - 关键字段：airspeed, groundspeed, heading, throttle
+       - 处理流程：接收 → 解析 → 更新速度/高度显示
+    
+    6. GPS_RAW_INT (ID: 24)
+       - 功能：原始GPS数据
+       - 频率：5Hz
+       - 关键字段：lat, lon, alt, satellites_visible
+       - 处理流程：接收 → 解析 → 更新卫星数量显示
+    
+    7. MISSION_ITEM_REACHED (ID: 46)
+       - 功能：航点到达通知
+       - 频率：事件触发
+       - 关键字段：seq
+       - 处理流程：接收 → 解析 → 更新航点进度
+    
+    【数据流架构】
+    SITL/PX4 → MAVLink (UDP 14550) → MAVLink Parser → 数据处理层 → 前端展示
+    
+    【接口实现位置】
+    1. 数据接收层：预留 UDP/TCP Socket 接收接口
+    2. 消息解析层：预留 MavlinkParser 类，负责解析各类型消息
+    3. 数据转换层：将 MAVLink 数据转换为前端展示格式
+    4. 状态管理层：HeartbeatSimulator 类可扩展为真实数据管理
+    
+    【待实现方法】
+    - mavlink_connect(connection_string: str) -> bool
+    - mavlink_receive_message() -> Optional[MAVLinkMessage]
+    - mavlink_parse_heartbeat(msg: MAVLinkMessage) -> HeartbeatData
+    - mavlink_parse_position(msg: MAVLinkMessage) -> PositionData
+    - mavlink_parse_status(msg: MAVLinkMessage) -> StatusData
+    """
+    
+    # 消息类型定义
+    MESSAGE_TYPES = {
+        "HEARTBEAT": {"id": 0, "frequency": "1Hz", "description": "系统心跳状态"},
+        "SYS_STATUS": {"id": 1, "frequency": "1Hz", "description": "电池与系统状态"},
+        "GLOBAL_POSITION_INT": {"id": 33, "frequency": "10Hz", "description": "全球定位信息"},
+        "ATTITUDE": {"id": 30, "frequency": "10Hz", "description": "姿态信息"},
+        "VFR_HUD": {"id": 74, "frequency": "10Hz", "description": "飞行状态数据"},
+        "GPS_RAW_INT": {"id": 24, "frequency": "5Hz", "description": "原始GPS数据"},
+        "MISSION_ITEM_REACHED": {"id": 46, "frequency": "事件触发", "description": "航点到达通知"},
+        "COMMAND_ACK": {"id": 77, "frequency": "事件触发", "description": "命令确认"},
+    }
+    
+    # 数据流架构
+    DATA_FLOW = """
+    ┌─────────────────────────────────────────────────────────────────────────┐
+    │                        数据流架构                                      │
+    ├─────────────────────────────────────────────────────────────────────────┤
+    │                                                                        │
+    │   SITL/PX4 ──(UDP 14550)──▶ MAVLink Parser ──▶ 数据处理层 ──▶ 前端展示  │
+    │       │                          │                    │                │
+    │       │                          │                    │                │
+    │   ──▶ HEARTBEAT ──────────────▶ 系统状态更新 ────▶ 状态指示器         │
+    │   ──▶ SYS_STATUS ─────────────▶ 电量/电压更新 ────▶ 电量仪表盘        │
+    │   ──▶ GLOBAL_POSITION_INT ────▶ 位置更新 ────────▶ 地图标记/轨迹      │
+    │   ──▶ ATTITUDE ───────────────▶ 姿态更新 ────────▶ 姿态指示器         │
+    │   ──▶ VFR_HUD ────────────────▶ 飞行数据更新 ────▶ 仪表盘显示         │
+    │   ──▶ GPS_RAW_INT ────────────▶ GPS数据更新 ────▶ 卫星数量显示        │
+    │   ──▶ MISSION_ITEM_REACHED ───▶ 航点更新 ────────▶ 航点进度条         │
+    │                                                                        │
+    └─────────────────────────────────────────────────────────────────────────┘
+    """
+    
+    @classmethod
+    def get_message_table(cls) -> pd.DataFrame:
+        """获取消息类型表格"""
+        data = []
+        for name, info in cls.MESSAGE_TYPES.items():
+            data.append({
+                "消息名称": name,
+                "ID": info["id"],
+                "频率": info["frequency"],
+                "描述": info["description"]
+            })
+        return pd.DataFrame(data)
+    
+    @classmethod
+    def get_interface_status(cls) -> str:
+        """获取接口状态说明"""
+        return """
+        **📡 MAVLink 接口状态**
+        
+        | 项目 | 状态 |
+        |------|------|
+        | 当前数据源 | 模拟数据（Simulation） |
+        | 预留接口 | ✅ 已预留 MAVLink Parser 接口 |
+        | 真实数据支持 | ⏳ 待接入 SITL / 真实无人机 |
+        | 消息解析 | ✅ 已定义 8 种 MAVLink 消息类型 |
+        | 数据处理层 | ✅ 已预留 DataProcessor 接口 |
+        
+        **🔌 接入方式**
+        - UDP/TCP Socket 接收 MAVLink 数据流
+        - 默认端口：14550 (UDP)
+        - 支持 PX4 / ArduPilot 飞控
+        """
+
+
 # ==================== 通信链路模拟器 ====================
 @dataclass
 class CommunicationLog:
@@ -184,6 +320,7 @@ class CommunicationSimulator:
         self.planning_records.insert(0, record)
         if len(self.planning_records) > 20:
             self.planning_records.pop()
+
 
 # ==================== 几何函数 ====================
 def point_in_polygon(point: List[float], polygon: List[List[float]]) -> bool:
@@ -294,6 +431,7 @@ def check_safety_radius(drone_pos: List[float], obstacles_gcj: List[Dict], fligh
         return False, min_distance, danger_name
     return True, min_distance if min_distance != float('inf') else None, None
 
+
 # ==================== 障碍物管理 ====================
 def cleanup_old_backups():
     try:
@@ -371,6 +509,7 @@ def restore_from_backup(backup_path: str) -> bool:
     except Exception as e:
         st.error(f"恢复备份失败: {e}")
         return False
+
 
 # ==================== 优化的绕行算法 ====================
 import math
@@ -790,6 +929,7 @@ def calculate_path_length(path: List[List[float]]) -> float:
         return 0.0
     return sum(distance(path[i], path[i + 1]) for i in range(len(path) - 1))
 
+
 # ==================== 心跳包模拟器 ====================
 @dataclass
 class HeartbeatData:
@@ -968,6 +1108,7 @@ class HeartbeatSimulator:
         } for h in self.flight_log]
         return pd.DataFrame(data)
 
+
 # ==================== 地图创建 ====================
 def create_planning_map(center_gcj: List[float], points_gcj: Dict, obstacles_gcj: List[Dict],
                         flight_history: Optional[List] = None, planned_path: Optional[List] = None,
@@ -1047,6 +1188,7 @@ def create_planning_map(center_gcj: List[float], points_gcj: Dict, obstacles_gcj
     
     return m
 
+
 # ==================== 辅助UI函数 ====================
 def init_session_state():
     defaults = {
@@ -1069,7 +1211,11 @@ def init_session_state():
         'temp_click_point': None,
         'conv_result': None,
         'batch_result': None,
-        'offset_result': None
+        'offset_result': None,
+        # MAVLink 接口状态
+        'mavlink_connected': False,
+        'mavlink_data_source': 'simulation',  # 'simulation' | 'sitl' | 'real'
+        'mavlink_connection_string': 'udp://127.0.0.1:14550',
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -1115,6 +1261,7 @@ def render_sidebar() -> Tuple[str, int, float, bool]:
     st.sidebar.subheader("💾 自动保存")
     auto_save = st.sidebar.checkbox("自动保存障碍物", st.session_state.auto_backup)
     return page, drone_speed, flight_alt, auto_save
+
 
 # ==================== 通信拓扑页面 ====================
 def render_communication_page():
@@ -1379,6 +1526,127 @@ def render_communication_page():
                 comm.planning_records.clear()
                 st.success("✅ 日志已清空")
                 st.rerun()
+
+
+# ==================== MAVLink 接口规划页面组件 ====================
+def render_mavlink_interface_plan():
+    """渲染 MAVLink 接口规划文档"""
+    st.markdown("### 📡 MAVLink 接口规划文档")
+    
+    # 接口状态说明
+    st.info("""
+    **📌 预留接口说明**
+    
+    当前飞行监控模块使用**模拟数据**展示，已预留 MAVLink 消息解析接口。
+    后续可通过替换数据源接入真实的 SITL（Software In The Loop）数据流或真实无人机数据。
+    """)
+    
+    # 当前数据源状态
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.markdown(f"""
+        <div style="background: #e8f5e9; border-radius: 10px; padding: 15px; text-align: center; border: 1px solid #4caf50;">
+            <h4>📊 当前数据源</h4>
+            <p style="font-size: 20px; font-weight: bold; color: #2e7d32;">模拟数据</p>
+            <p style="font-size: 12px; color: #666;">Simulation Mode</p>
+        </div>
+        """, unsafe_allow_html=True)
+    with col2:
+        st.markdown(f"""
+        <div style="background: #fff3e0; border-radius: 10px; padding: 15px; text-align: center; border: 1px solid #ff9800;">
+            <h4>🔌 接口状态</h4>
+            <p style="font-size: 20px; font-weight: bold; color: #e65100;">✅ 已预留</p>
+            <p style="font-size: 12px; color: #666;">MAVLink Parser 接口</p>
+        </div>
+        """, unsafe_allow_html=True)
+    with col3:
+        st.markdown(f"""
+        <div style="background: #e3f2fd; border-radius: 10px; padding: 15px; text-align: center; border: 1px solid #2196f3;">
+            <h4>📋 消息类型</h4>
+            <p style="font-size: 20px; font-weight: bold; color: #0d47a1;">8 种</p>
+            <p style="font-size: 12px; color: #666;">已定义 MAVLink 消息</p>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    st.markdown("---")
+    
+    # 消息类型表格
+    st.markdown("#### 📋 支持的 MAVLink 消息类型")
+    df = MAVLinkInterfaceSpec.get_message_table()
+    st.dataframe(df, use_container_width=True, hide_index=True)
+    
+    # 数据流架构
+    st.markdown("#### 🔄 数据流架构")
+    st.code("""
+    ┌─────────────────────────────────────────────────────────────────────────────┐
+    │                         MAVLink 数据流架构                                 │
+    ├─────────────────────────────────────────────────────────────────────────────┤
+    │                                                                             │
+    │   SITL/PX4 ──(UDP 14550)──▶ MAVLink Parser ──▶ 数据处理层 ──▶ 前端展示     │
+    │       │                          │                    │                     │
+    │       │                          │                    │                     │
+    │   ──▶ HEARTBEAT ──────────────▶ 系统状态更新 ────▶ 状态指示器              │
+    │   ──▶ SYS_STATUS ─────────────▶ 电量/电压更新 ────▶ 电量仪表盘             │
+    │   ──▶ GLOBAL_POSITION_INT ────▶ 位置更新 ────────▶ 地图标记/轨迹           │
+    │   ──▶ ATTITUDE ───────────────▶ 姿态更新 ────────▶ 姿态指示器              │
+    │   ──▶ VFR_HUD ────────────────▶ 飞行数据更新 ────▶ 仪表盘显示              │
+    │   ──▶ GPS_RAW_INT ────────────▶ GPS数据更新 ────▶ 卫星数量显示             │
+    │   ──▶ MISSION_ITEM_REACHED ───▶ 航点更新 ────────▶ 航点进度条              │
+    │                                                                             │
+    └─────────────────────────────────────────────────────────────────────────────┘
+    """, language="text")
+    
+    # 接口实现规划
+    st.markdown("#### 🔧 接口实现规划")
+    
+    impl_tab1, impl_tab2 = st.tabs(["📝 待实现方法", "📊 数据转换映射"])
+    
+    with impl_tab1:
+        st.markdown("""
+        | 方法签名 | 功能描述 | 状态 |
+        |---------|---------|------|
+        | `mavlink_connect(connection_string: str) -> bool` | 连接 MAVLink 数据源 | ⏳ 待实现 |
+        | `mavlink_disconnect() -> bool` | 断开 MAVLink 连接 | ⏳ 待实现 |
+        | `mavlink_receive_message() -> Optional[MAVLinkMessage]` | 接收 MAVLink 消息 | ⏳ 待实现 |
+        | `mavlink_parse_heartbeat(msg) -> HeartbeatData` | 解析 HEARTBEAT 消息 | ⏳ 待实现 |
+        | `mavlink_parse_position(msg) -> PositionData` | 解析 GLOBAL_POSITION_INT | ⏳ 待实现 |
+        | `mavlink_parse_status(msg) -> StatusData` | 解析 SYS_STATUS | ⏳ 待实现 |
+        | `mavlink_parse_attitude(msg) -> AttitudeData` | 解析 ATTITUDE | ⏳ 待实现 |
+        | `mavlink_parse_vfr_hud(msg) -> VFRHUDData` | 解析 VFR_HUD | ⏳ 待实现 |
+        """)
+    
+    with impl_tab2:
+        st.markdown("""
+        | MAVLink 字段 | 前端显示 | 更新频率 |
+        |-------------|---------|---------|
+        | `HEARTBEAT.system_status` | 系统状态指示器 | 1Hz |
+        | `SYS_STATUS.battery_remaining` | 电量百分比 | 1Hz |
+        | `GLOBAL_POSITION_INT.lat/lon` | 地图位置标记 | 10Hz |
+        | `GLOBAL_POSITION_INT.alt` | 高度显示 | 10Hz |
+        | `ATTITUDE.roll/pitch/yaw` | 姿态指示器 | 10Hz |
+        | `VFR_HUD.airspeed/groundspeed` | 速度显示 | 10Hz |
+        | `GPS_RAW_INT.satellites_visible` | 卫星数量 | 5Hz |
+        | `MISSION_ITEM_REACHED.seq` | 航点进度 | 事件触发 |
+        """)
+    
+    # 接入配置
+    st.markdown("#### ⚙️ 接入配置")
+    config_col1, config_col2 = st.columns(2)
+    with config_col1:
+        st.markdown("""
+        **🔌 连接方式**
+        - UDP Socket: `udp://127.0.0.1:14550`
+        - TCP Socket: `tcp://127.0.0.1:5760`
+        - 串口: `/dev/ttyUSB0`
+        """)
+    with config_col2:
+        st.markdown("""
+        **🎯 支持飞控**
+        - PX4 (Autopilot)
+        - ArduPilot (Mission Planner)
+        - 其他 MAVLink 兼容飞控
+        """)
+
 
 # ==================== 航线规划页面 ====================
 def render_planning_page(drone_speed: int, flight_alt: float, auto_save: bool):
@@ -1750,6 +2018,7 @@ def render_obstacle_dialog():
             st.session_state.pending_obstacle = None
             st.rerun()
 
+
 # ==================== 坐标转换工具标签页 ====================
 def render_coordinate_conversion_tab():
     """坐标转换工具标签页"""
@@ -1911,31 +2180,16 @@ def render_batch_conversion():
         else:
             st.info("点击「执行批量转换」查看结果")
 
+
 # ==================== 飞行监控页面 ====================
 def render_flight_monitoring_page(flight_alt: float, drone_speed: int):
     st.header("📡 飞行监控 - 实时心跳包")
-
- # ==================== 新增：预留接口说明 ====================
-    with st.expander("🔌 接口规划与预留说明", expanded=False):
-        st.info("""
-        **📌 当前数据为模拟数据，已预留 MAVLink 解析接口**
-        
-        后续可替换为真实 SITL/无人机数据，通过以下方式接入：
-        - **UDP 端口**: 14550 (默认)
-        - **协议**: MAVLink 1.0 / 2.0
-        - **数据源**: PX4 SITL / 真实飞控
-        
-        **已规划支持的 MAVLink 消息类型：**
-        | 消息类型 | 用途 | 对应显示字段 |
-        |---------|------|-------------|
-        | `HEARTBEAT` | 系统心跳，检测连接状态 | 飞行状态、系统在线 |
-        | `SYS_STATUS` | 系统状态与电池信息 | 电量、电压 |
-        | `GLOBAL_POSITION_INT` | 全球定位信息 | 经纬度、高度、速度 |
-        | `ATTITUDE` | 姿态数据 (Roll/Pitch/Yaw) | 预留扩展 |
-        | `VFR_HUD` | 飞行仪表数据 | 速度、高度、航向 |
-        | `GPS_RAW_INT` | GPS 原始数据 | 卫星数量、定位精度 |
-        
-        **数据处理流程：**
+    
+    # ========== MAVLink 接口规划文档（折叠式） ==========
+    with st.expander("📡 MAVLink 接口规划文档 (预留接口说明)", expanded=False):
+        render_mavlink_interface_plan()
+    
+    st.markdown("---")
     
     # 自动刷新控制
     auto_refresh = st.checkbox("🔄 自动刷新 (2秒)", value=True, key="auto_refresh_monitor")
@@ -1964,29 +2218,20 @@ def render_flight_monitoring_page(flight_alt: float, drone_speed: int):
                 current_waypoint = total_waypoints
             else:
                 # 根据当前位置计算当前航点
-                # 方法1：基于进度计算（原有方法但修正）
                 if latest.progress >= 0:
-                    # 计算当前所在的航段索引
                     segment_count = len(st.session_state.planned_path) - 1
                     segment_index = int(latest.progress * segment_count)
-                    
-                    # 确保索引在有效范围内
                     segment_index = min(segment_index, segment_count - 1) if segment_count > 0 else 0
                     
-                    # 当前航点是下一个要到达的航点
-                    if latest.progress >= 0.999:  # 接近终点
+                    if latest.progress >= 0.999:
                         current_waypoint = total_waypoints
                     else:
                         current_waypoint = segment_index + 1
                     
-                    # 边界检查
                     current_waypoint = min(current_waypoint, total_waypoints)
                     current_waypoint = max(current_waypoint, 1)
                 else:
-                    current_waypoint = 1  # 起点
-        
-        # 调试信息（可选，用于验证）
-        # st.caption(f"调试: progress={latest.progress:.3f}, total={total_waypoints}, current={current_waypoint}")
+                    current_waypoint = 1
         
         # 计算航点进度百分比
         waypoint_progress_value = current_waypoint / total_waypoints if total_waypoints > 0 else 0
@@ -2020,10 +2265,8 @@ def render_flight_monitoring_page(flight_alt: float, drone_speed: int):
             if total_waypoints > 0:
                 st.metric("🎯 当前航点", waypoint_display,
                           delta=f"进度 {int(waypoint_progress_value*100)}%" if not latest.arrived else "已完成")
-                # 添加航点进度条
                 st.progress(waypoint_progress_value, text=f"航点进度: {int(waypoint_progress_value*100)}%")
                 
-                # 显示下一个航点信息
                 if not latest.arrived and current_waypoint < total_waypoints:
                     next_wp = st.session_state.planned_path[current_waypoint]
                     st.caption(f"📍 下一航点: ({next_wp[0]:.6f}, {next_wp[1]:.6f})")
@@ -2189,7 +2432,6 @@ def render_flight_monitoring_page(flight_alt: float, drone_speed: int):
                     if h.arrived:
                         hist_waypoint = total_waypoints
                     else:
-                        # 使用修正后的航点计算逻辑
                         segment_count = total_waypoints - 1
                         if segment_count > 0 and h.progress >= 0:
                             segment_index = int(h.progress * segment_count)
@@ -2230,7 +2472,7 @@ def render_flight_monitoring_page(flight_alt: float, drone_speed: int):
     # 自动刷新逻辑（放在函数末尾）
     if auto_refresh and st.session_state.simulation_running:
         import time
-        time.sleep(2)  # 等待2秒
+        time.sleep(2)
         st.rerun()
 
 
@@ -2305,10 +2547,7 @@ def update_flight_simulation():
                         st.rerun()
             except Exception as e:
                 st.error(f"更新心跳时出错: {e}")
-        else:
-            # 修复：避免无限递归，只在需要时更新时间戳
-            if time.time() - st.session_state.last_hb_time < config.HEARTBEAT_INTERVAL:
-                pass  # 正常情况，不需要更新时间戳
+
 
 # ==================== 障碍物管理页面 ====================
 def render_obstacle_management_page(flight_alt: float):
@@ -2672,6 +2911,7 @@ def update_path_after_obstacle_change(flight_alt: float):
             st.session_state.obstacles_gcj, flight_alt,
             st.session_state.current_direction, st.session_state.safety_radius)
 
+
 # ==================== 主程序 ====================
 def main():
     st.set_page_config(page_title="无人机地面站系统", layout="wide")
@@ -2698,6 +2938,7 @@ def main():
         render_communication_page()
     elif page == "🚧 障碍物管理":
         render_obstacle_management_page(flight_alt)
+
 
 if __name__ == "__main__":
     main()
