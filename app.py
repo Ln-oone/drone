@@ -1288,6 +1288,169 @@ def render_communication_page():
             ### ❤️ HEARTBEAT 报文 (ID: 0)
 
             **📝 报文结构**
+HEARTBEAT (ID: 0)
+├── type: 1 (MAV_TYPE_QUADROTOR)
+├── autopilot: 12 (MAV_AUTOPILOT_PX4)
+├── base_mode: 81 (MAV_MODE_FLAG_SAFETY_ARMED)
+├── custom_mode: 0x0000
+├── system_status: 3 (MAV_STATE_ACTIVE)
+└── mavlink_version: 3
+
+**📊 当前解析值**
+| 字段 | 值 | 说明 |
+|------|-----|------|
+| type | 1 | 四旋翼无人机 |
+| autopilot | 12 | PX4 飞控 |
+| base_mode | 81 | 已解锁 + 自定义模式 |
+| system_status | 3 | 主动状态 |
+| mavlink_version | 3 | MAVLink v2 |
+
+**🔔 状态说明**
+- ✅ 系统状态: ACTIVE (正常运行)
+- ✅ 解锁状态: ARMED (已解锁)
+- ✅ 飞行模式: AUTO (自动模式)
+""")
+elif msg_type == "SYS_STATUS":
+st.markdown("""
+### 🔋 SYS_STATUS 报文 (ID: 1)
+
+**📝 报文结构**
+SYS_STATUS (ID: 1)
+├── onboard_control_sensors_present: 0xFFFF
+├── onboard_control_sensors_enabled: 0xFFFF
+├── onboard_control_sensors_health: 0xFFFF
+├── load: 0.8
+├── voltage_battery: 22.2
+├── current_battery: 12.5
+├── battery_remaining: 85
+├── drop_rate_comm: 0
+└── errors_comm: 0
+
+**📊 当前解析值**
+| 字段 | 值 | 说明 |
+|------|-----|------|
+| voltage_battery | 22.2V | 电池电压 |
+| current_battery | 12.5A | 电池电流 |
+| battery_remaining | 85% | 剩余电量 |
+| load | 0.8 | CPU负载 |
+| 通信丢包率 | 0% | 通信正常 |
+
+**🔔 状态说明**
+- ✅ 电池状态: 正常 (85%)
+- ✅ 传感器状态: 全部正常
+- ✅ 通信状态: 正常
+""")
+elif msg_type == "GLOBAL_POSITION_INT":
+lat = 32.233767 + random.uniform(-0.00005, 0.00005)
+lon = 118.749155 + random.uniform(-0.00005, 0.00005)
+st.markdown(f"""
+### 🌍 GLOBAL_POSITION_INT 报文 (ID: 33)
+
+**📝 报文结构**
+GLOBAL_POSITION_INT (ID: 33)
+├── time_boot_ms: 123456
+├── lat: {lat:.8f}
+├── lon: {lon:.8f}
+├── alt: 50000 (mm)
+├── relative_alt: 50000 (mm)
+├── vx: 0 (mm/s)
+├── vy: 0 (mm/s)
+├── vz: 0 (mm/s)
+└── hdg: 180 (cdeg)
+
+**📊 当前解析值**
+| 字段 | 值 | 说明 |
+|------|-----|------|
+| 纬度 | {lat:.8f}° | 当前位置 |
+| 经度 | {lon:.8f}° | 当前位置 |
+| 绝对高度 | 50.0 m | 海平面高度 |
+| 相对高度 | 50.0 m | 起飞点高度 |
+| 航向 | 180.0° | 机头方向 |
+
+**📍 位置信息**
+- 当前位置: 南京理工大学
+- 高度: 50m (相对起飞点)
+""")
+elif msg_type == "ATTITUDE":
+roll = random.uniform(-3, 3)
+pitch = random.uniform(-2, 2)
+yaw = random.uniform(0, 360)
+st.markdown(f"""
+### 🔄 ATTITUDE 报文 (ID: 30)
+
+**📝 报文结构**
+ATTITUDE (ID: 30)
+├── time_boot_ms: 123456
+├── roll: {roll:.6f} (rad)
+├── pitch: {pitch:.6f} (rad)
+├── yaw: {yaw:.6f} (rad)
+├── rollspeed: 0.001 (rad/s)
+├── pitchspeed: 0.002 (rad/s)
+└── yawspeed: 0.001 (rad/s)
+
+
+**📊 当前解析值**
+| 字段 | 值 | 说明 |
+|------|-----|------|
+| 横滚角 (Roll) | {roll:.1f}° | 左右倾斜 |
+| 俯仰角 (Pitch) | {pitch:.1f}° | 前后倾斜 |
+| 偏航角 (Yaw) | {yaw:.1f}° | 机头方向 |
+
+**📐 姿态指示**
+- 飞行姿态: 稳定
+- 角度变化: 平稳
+""")
+elif msg_type == "VFR_HUD":
+airspeed = random.uniform(5, 15)
+groundspeed = random.uniform(4, 12)
+heading = random.uniform(0, 360)
+throttle = random.randint(40, 70)
+st.markdown(f"""
+### 📊 VFR_HUD 报文 (ID: 74)
+
+**📝 报文结构**
+VFR_HUD (ID: 74)
+├── airspeed: {airspeed:.1f} (m/s)
+├── groundspeed: {groundspeed:.1f} (m/s)
+├── heading: {heading:.1f} (deg)
+├── throttle: {throttle} (%)
+├── alt: 50.0 (m)
+└── climb: 0.5 (m/s)
+
+     
+**📊 当前解析值**
+| 字段 | 值 | 说明 |
+|------|-----|------|
+| 空速 | {airspeed:.1f} m/s | 相对空气速度 |
+| 地速 | {groundspeed:.1f} m/s | 相对地面速度 |
+| 航向 | {heading:.1f}° | 飞行方向 |
+| 油门 | {throttle}% | 动力输出 |
+
+**✈️ 飞行状态**
+- 飞行速度: {airspeed:.1f} m/s
+- 飞行方向: {heading:.1f}°
+- 动力输出: {throttle}%
+""")
+else:
+satellites = random.randint(8, 14)
+fix_type = random.choice([3, 4, 5])
+fix_names = {3: "3D Fix", 4: "DGPS Fix", 5: "RTK Fix"}
+st.markdown(f"""
+### 🛰️ GPS_RAW_INT 报文 (ID: 24)
+
+**📝 报文结构**
+GPS_RAW_INT (ID: 24)
+├── time_usec: 123456789
+├── lat: 32233767 (1E7)
+├── lon: 118749155 (1E7)
+├── alt: 50000 (mm)
+├── eph: 1.2 (m)
+├── epv: 1.5 (m)
+├── vel: 12.5 (m/s)
+├── cog: 180 (cdeg)
+├── satellites_visible: {satellites}
+└── fix_type: {fix_type}
+
 
 **📊 当前解析值**
 | 字段 | 值 | 说明 |
